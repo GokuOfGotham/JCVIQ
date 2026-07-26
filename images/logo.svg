@@ -1,0 +1,27 @@
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="JCVIQ logo">
+  <defs>
+    <linearGradient id="bg" x1="18" y1="12" x2="112" y2="118" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7C3AED"/>
+      <stop offset="0.55" stop-color="#5B4BE8"/>
+      <stop offset="1" stop-color="#2563EB"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.32" cy="0.26" r="0.9">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.28"/>
+      <stop offset="0.55" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Squircle badge -->
+  <rect x="8" y="8" width="112" height="112" rx="30" fill="url(#bg)"/>
+  <rect x="8" y="8" width="112" height="112" rx="30" fill="url(#glow)"/>
+
+  <!-- Bold J monogram -->
+  <text x="48" y="92" font-family="Arial Black, Arial, sans-serif" font-weight="900"
+        font-size="78" fill="#FFFFFF" text-anchor="middle">J</text>
+
+  <!-- Cyan play accent (creator / video, distinct from YouTube's central red triangle) -->
+  <path d="M74 40 L74 60 Q74 62 76 60.8 L92 51 Q94 50 92 48.8 L76 39.2 Q74 38 74 40 Z" fill="#22D3EE"/>
+
+  <!-- IQ spark -->
+  <circle cx="92" cy="70" r="3.2" fill="#22D3EE" opacity="0.9"/>
+</svg>

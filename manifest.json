@@ -1,0 +1,48 @@
+{
+  "manifest_version": 3,
+  "name": "JCVIQ - YouTube AI Optimizer",
+  "version": "1.1",
+  "description": "AI-powered YouTube optimization with title, description, tags, and thumbnail analysis using Google Gemini.",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage"
+  ],
+  "host_permissions": [
+    "https://*.youtube.com/*",
+    "https://i.ytimg.com/*",
+    "https://generativelanguage.googleapis.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "JCVIQ - YouTube Optimizer",
+    "default_icon": {
+      "16": "images/icon16.png",
+      "32": "images/icon32.png",
+      "48": "images/icon48.png",
+      "128": "images/icon128.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://*.youtube.com/*"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["images/*"],
+      "matches": ["https://*.youtube.com/*"]
+    }
+  ],
+  "icons": {
+    "16": "images/icon16.png",
+    "32": "images/icon32.png",
+    "48": "images/icon48.png",
+    "128": "images/icon128.png"
+  }
+}
