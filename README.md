@@ -1,264 +1,133 @@
-# JCVIQ - YouTube AI Optimizer (Chrome Extension)
+# JCVIQ — YouTube AI Optimizer
 
-A powerful Chrome extension that uses Google Gemini AI to optimize YouTube videos with intelligent suggestions for titles, descriptions, tags, and more.
+A Chrome extension that puts a Google Gemini–powered optimization assistant directly inside YouTube and YouTube Studio. It reads what your video actually contains — transcript, thumbnail, and sampled video frames — then generates optimized metadata and, in Studio, writes it straight into the edit form.
 
-## Features
-
-✨ **Complete Video Optimization:**
-- 📝 **Title Suggestions** - Get 3 AI-generated high-CTR title alternatives with explanations
-- 📄 **Description Optimization** - Get an optimized description with keywords and CTAs
-- 🏷️ **Smart Tags** - Receive 10 SEO-optimized tags with strategic explanations
-- 🖼️ **Thumbnail Advice** - Get specific guidance on improving your thumbnail design
-- 🔍 **SEO Keywords** - Discover high-impact keywords and phrases to target
-- 🎯 **Content Strategy** - Receive actionable advice on video structure and engagement
-
-🔒 **Secure API Handling:**
-- API keys stored locally in your browser
-- No external server communication except with Google Gemini API
-- One-time setup for easy use
-
-⚡ **User-Friendly Interface:**
-- Simple, intuitive popup interface
-- One-click optimization analysis
-- Easy copy-to-clipboard for all suggestions
-- Real-time loading indicators
+No popup. The panel is injected into the page itself.
 
 ---
 
-## Setup Instructions
+## What it does
 
-### Prerequisites
-- Google Chrome (or Chromium-based browser)
-- Google Gemini API key (get one free at [Google AI Studio](https://aistudio.google.com/app/apikeys))
+**Generates a full metadata set**
+- 3 title options, each with the reasoning behind it
+- Optimized description, hashtags, and up to 500 characters of tags
+- Chapter list with timestamps
+- Thumbnail concepts (text overlay + visual idea)
+- Suggested category, playlists, and a pinned comment
+- Opening hook and end-screen guidance
 
-### Installation
+**Scores what you already have**
 
-1. **Clone or Download This Project**
-   ```bash
-   git clone <your-repo-url>
-   cd JCVIQ
-   ```
+A diagnostic scorecard rating title clarity, curiosity, keyword relevance, mobile readability, and description completeness, plus a clickbait-risk assessment and written summary.
 
-2. **Add Your Gemini API Key**
-   - Get your free API key from [Google AI Studio](https://aistudio.google.com/app/apikeys)
-   - You'll enter it in the extension UI on first use
+**Suggests repurposing**
 
-3. **Load into Chrome**
-   - Open Chrome and go to `chrome://extensions/`
-   - Toggle **Developer Mode** (top right corner)
-   - Click **Load Unpacked** (top left)
-   - Select the `JCVIQ` folder
-   - The extension is now installed!
+Shorts ideas with hooks, ready-to-post copy for X / Community / Instagram, and follow-up video concepts.
 
-4. **Configure API Key**
-   - Navigate to any YouTube video
-   - Click the JCVIQ extension icon (top right)
-   - Paste your Gemini API key in the setup dialog
-   - Click "Save API Key"
+**Applies results in Studio**
 
-### Usage
+On a Studio edit page, one click writes a suggestion into the real form field. Tags are fitted to YouTube's 500-character limit by budgeting whole tags rather than truncating mid-word.
 
-1. **Navigate to a YouTube Video**
-   - Go to any YouTube video page
+**Mass updates**
 
-2. **Click the Extension Icon**
-   - Find JCVIQ in your Chrome extensions (top right)
-   - Click it to open the popup
+From the Studio video list, JCVIQ can queue your library and walk through it, optimizing and saving each video in turn.
 
-3. **Click "Optimize Video"**
-   - The extension will extract video metadata
-   - Gemini AI will analyze and provide suggestions
-   - Results appear with easy-to-copy options
+**History**
 
-4. **Copy and Apply Suggestions**
-   - Click the 📋 button next to any suggestion to copy
-   - Use the suggestions to improve your video's performance
-   - Test and iterate!
+The last 40 optimizations are stored locally and browsable from the panel.
 
 ---
 
-## File Structure
+## How it gathers context
+
+JCVIQ doesn't optimize from the title alone. Before calling the model it collects:
+
+- **Transcript** — pulled for the video where available
+- **Thumbnail** — fetched and passed to the model as image input
+- **Video frames** — up to 4 frames captured from the player, which matters for private or still-processing uploads that have no public thumbnail yet
+- **Page metadata** — parsed from YouTube's embedded `ytInitialPlayerResponse` rather than scraped from the DOM, with separate extraction paths for watch pages and Studio
+- **Your channel profile** — niche, audience, tone, things to avoid, CTA, hashtags, links, and language, saved once and injected into every prompt so output sounds like your channel
+
+The model call uses `gemini-2.5-flash` with Google Search grounding enabled, so SEO recommendations reflect current search behavior rather than training data alone. Extended reasoning is disabled (`thinkingBudget: 0`) because this is an interactive workload where latency matters more than deep deliberation. Responses are constrained by a typed JSON schema, with repair passes for the unescaped newlines and truncated objects that language models occasionally emit.
+
+---
+
+## Install
+
+**Requirements:** Chrome or any Chromium browser, and a Google Gemini API key ([free from Google AI Studio](https://aistudio.google.com/app/apikeys)).
+
+1. Clone or download this repository.
+2. Open `chrome://extensions/` and turn on **Developer mode** (top right).
+3. Click **Load unpacked** and select the `JCVIQ` folder.
+4. Open any YouTube video or Studio edit page. The JCVIQ panel appears on the page.
+5. Click the **⚙️ settings** icon in the panel, paste your API key, and click save. The key is stored in `chrome.storage.local` on your machine.
+
+Optionally, fill in the channel profile fields in settings — it measurably improves output quality.
+
+### Developer key fallback
+
+`background.js` prefers the key in `chrome.storage.local` and falls back to a `CONFIG.GEMINI_API_KEY` value from `config.js` if one exists. That file is gitignored and exists only as a local convenience. Copy `config.example.js` to `config.js` if you want it; end users don't need it.
+
+---
+
+## Where it works
+
+| Page | Behavior |
+|---|---|
+| `youtube.com/watch` | Analyze any video, including competitors' |
+| `studio.youtube.com` edit page | Analyze plus one-click apply to the form |
+| `studio.youtube.com/.../videos` | Mass update across the video list |
+
+The panel tracks YouTube's single-page navigation and switches between individual and mass modes based on whether an edit form is present.
+
+---
+
+## Project structure
 
 ```
 JCVIQ/
-├── manifest.json       # Extension configuration (Manifest V3)
-├── content.js          # Injected panel UI + YouTube/Studio data extraction
-├── content.css         # Styling for the injected panel
-├── background.js       # Service worker: Gemini API, transcript & thumbnail fetch
-├── config.js           # OPTIONAL dev-only Gemini key fallback (gitignored)
-├── images/             # Extension icons
-└── README.md           # This file
+├── manifest.json        # Manifest V3 config, permissions, script registration
+├── content.js           # Injected panel UI, metadata extraction, Studio automation
+├── content.css          # Panel, scorecard, and history styling
+├── background.js        # Service worker: Gemini calls, transcript + thumbnail fetch
+├── config.example.js    # Template for the optional local key fallback
+├── images/              # Extension icons and logo
+├── README.md
+└── SETUP_GUIDE.md       # Condensed setup steps
 ```
 
-### File Descriptions
+**content.js** — builds and mounts the panel, extracts metadata from watch and Studio pages, captures frames, renders results and the scorecard, writes values into Studio form fields, and orchestrates mass updates.
 
-**manifest.json**
-- Defines extension permissions and configuration
-- Registers the content script/CSS and the background service worker
-
-**content.js**
-- Runs on youtube.com and studio.youtube.com pages
-- Injects the JCVIQ panel directly into the page (no popup)
-- Extracts video title, description, tags, and metadata
-- On Studio, can auto-apply results to the edit form; orchestrates mass updates
-- Captures on-page video frames for visual grounding
-
-**content.css**
-- Styles the injected panel, results, scorecards, and history views
-
-**background.js**
-- Service worker running securely in the background
-- Reads the API key from `chrome.storage` (falls back to `config.js`)
-- Fetches the transcript and thumbnail for grounding
-- Calls the Gemini API and repairs/parses the JSON response
-
-**config.js** *(optional, gitignored)*
-- A convenience dev fallback holding a personal Gemini key
-- Not required — end users enter their key in the panel's Settings (⚙️)
-- Never commit this file; if a key leaks, revoke it at Google AI Studio
+**background.js** — resolves the API key, fetches transcript and thumbnail, builds the prompt, calls the Gemini API under a response schema, and parses or repairs the returned JSON.
 
 ---
 
-## API Key Management
+## Privacy
 
-### Getting a Free API Key
-
-1. Visit [Google AI Studio](https://aistudio.google.com/app/apikeys)
-2. Click "Create API Key"
-3. Select your project or create a new one
-4. Copy the API key
-5. Paste it into the JCVIQ extension
-
-### Free Tier Limits
-
-Google Gemini API has generous free tier limits:
-- **Requests per minute:** 60
-- **Requests per day:** Unlimited
-- **Cost:** Free
-
-Perfect for personal YouTube channel optimization!
-
-### Security Notes
-
-- API keys are stored **locally in your browser's storage**
-- They are **NOT** sent to external servers
-- They are **NOT** stored on our servers
-- You can delete your API key anytime from Chrome settings
+Your API key is stored locally in `chrome.storage.local` and is never transmitted anywhere except to Google's Gemini endpoint. There is no backend and no telemetry. Host permissions are limited to `youtube.com`, `i.ytimg.com`, and `generativelanguage.googleapis.com`.
 
 ---
 
 ## Troubleshooting
 
-### "Please navigate to a YouTube video"
-- Make sure you're on a YouTube video page (not YouTube home, search, or other pages)
-- Refresh the page and try again
-
-### "No response from Gemini API"
-- Check your internet connection
-- Verify your API key is correct
-- Check if you've exceeded rate limits (60 requests/min)
-
-### "API key not configured"
-- Click the extension icon
-- Paste your API key in the setup dialog
-- Click "Save API Key"
-
-### Extension not appearing
-- Make sure you're on youtube.com
-- Check that the extension is enabled in `chrome://extensions/`
-- Try refreshing the YouTube page
-
-### Can't extract video data
-- Make sure you're on a YouTube video watch page
-- Try refreshing the page
-- Check browser console for errors (F12 → Console)
+| Problem | Fix |
+|---|---|
+| Panel doesn't appear | Confirm the extension is enabled in `chrome://extensions/` and refresh the page. On Studio it mounts on edit pages and the video list. |
+| "API key not configured" | Open the panel's ⚙️ settings, paste your key, and save. |
+| No response from Gemini | Check connectivity and that the key is valid. The free tier allows 60 requests/minute. |
+| Results look generic | Fill in the channel profile fields in settings — they're injected into the prompt. |
+| Tags get dropped | Expected. YouTube caps tags at 500 characters total; JCVIQ fits whole tags to that budget. |
 
 ---
 
-## API Response Format
+## Known limitations
 
-The extension expects Gemini to return optimization data in this JSON format:
-
-```json
-{
-  "titles": [
-    { "title": "better title", "reason": "why this is better" },
-    ...
-  ],
-  "description": "optimized description text",
-  "tags": ["tag1", "tag2", ...],
-  "tagReasons": "explanation of tag strategy",
-  "thumbnailAdvice": "specific thumbnail improvement suggestions",
-  "keywordStrategy": "SEO keywords and phrases",
-  "contentStrategy": "video structure and engagement advice"
-}
-```
-
----
-
-## Performance Tips
-
-1. **Use During Editing**
-   - Get suggestions before publishing your video
-   - A/B test title variations
-
-2. **Check Competitor Videos**
-   - Navigate to competitor videos
-   - See what works in your niche
-   - Adapt successful strategies
-
-3. **Optimize Multiple Videos**
-   - Analyze your top-performing videos
-   - Identify common successful elements
-   - Apply patterns to new content
-
-4. **Monitor Results**
-   - Track which optimizations improve CTR
-   - Refine your strategy based on results
-   - Share successful patterns with your team
-
----
-
-## Limitations & Future Improvements
-
-### Current Limitations
-- Requires Gemini API key (though free tier is generous)
-- Only works on youtube.com
-- Single-video analysis (no batch processing yet)
-
-### Planned Features
-- 🔄 Batch analysis for multiple videos
-- 📊 Performance analytics integration
-- 🎨 Thumbnail template suggestions
-- 💾 Suggestion history
-- 📤 Direct YouTube description export
-- 🌐 Multi-language support
+- Transcripts aren't available for every video; analysis proceeds without one and says so.
+- Auto-apply works on Studio pages only — watch pages are read-only, so results are copy-to-clipboard.
+- Mass update depends on Studio's DOM and can need adjustment when YouTube changes its markup.
 
 ---
 
 ## License
 
-This project is provided as-is for personal and commercial use.
-
----
-
-## Support
-
-For issues or questions:
-1. Check the Troubleshooting section above
-2. Review the manifest.json and file structure
-3. Check Chrome DevTools console for error messages
-4. Verify Gemini API key validity at [Google AI Studio](https://aistudio.google.com/app/apikeys)
-
----
-
-## Credits
-
-Built with:
-- Chrome Manifest V3 API
-- Google Gemini AI
-- Modern JavaScript (ES6+)
-
----
-
-Happy optimizing! 🚀📺
+Provided as-is for personal and commercial use.

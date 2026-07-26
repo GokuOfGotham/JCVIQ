@@ -1,115 +1,54 @@
-// SETUP_GUIDE.md
+# JCVIQ — Quick Setup
 
-# JCVIQ - Quick Setup Guide
+Five minutes, three steps. See [README.md](README.md) for what the extension actually does.
 
-## 🚀 5-Minute Setup
+## 1. Get a Gemini API key
 
-### Step 1: Get Your Gemini API Key (1 min)
 1. Go to [Google AI Studio](https://aistudio.google.com/app/apikeys)
-2. Click **Create API Key** (in new project)
-3. Copy the API key
-4. **Save it somewhere safe** - you'll need it for the extension
+2. Click **Create API Key**
+3. Copy it — you'll paste it into the panel in step 3
 
-### Step 2: Load Extension into Chrome (2 min)
-1. Open Chrome
-2. Go to `chrome://extensions/`
-3. Toggle **Developer Mode** ON (top right)
-4. Click **Load Unpacked** (top left)
-5. Select the `JCVIQ` folder
-6. ✅ Extension is now installed!
+The free tier allows 60 requests per minute, which is plenty for a single channel.
 
-### Step 3: Configure the Extension (2 min)
-1. Go to any **YouTube video**
-2. Click the **JCVIQ icon** (top right of Chrome)
-3. Paste your **Gemini API key** in the setup dialog
-4. Click **Save API Key**
-5. ✅ You're all set!
+## 2. Load the extension
 
----
+1. Open `chrome://extensions/`
+2. Turn on **Developer mode** (top right)
+3. Click **Load unpacked** (top left)
+4. Select the `JCVIQ` folder
 
-## 🎬 How to Use
+## 3. Add your key
 
-1. **Open any YouTube video**
-2. **Click JCVIQ extension** → Opens popup
-3. **Click "🚀 Optimize Video"** → Waits for AI analysis
-4. **Review results:**
-   - 📝 Title suggestions (click 📋 to copy)
-   - 📄 Better description
-   - 🏷️ Recommended tags
-   - 🖼️ Thumbnail advice
-   - 🔍 SEO keywords
-   - 🎯 Content strategy tips
+1. Open any YouTube video, or a video's edit page in YouTube Studio
+2. The **JCVIQ panel appears on the page** — there is no popup, and you don't click the toolbar icon
+3. Click **⚙️** in the panel
+4. Paste your API key and save
 
-5. **Copy and apply** suggestions to your video!
+While you're in settings, fill in the channel profile — niche, audience, tone, what to avoid, your CTA. It gets injected into every prompt and noticeably improves results.
 
 ---
 
-## 📂 Project Files
+## Using it
 
-```
-JCVIQ/
-├── manifest.json    ← Chrome extension config
-├── content.js       ← Extracts YouTube data
-├── background.js    ← Calls Gemini API (secure)
-├── popup.html       ← Extension UI
-├── popup.js         ← UI logic
-├── popup.css        ← Styling
-└── README.md        ← Full documentation
-```
+**On a watch page:** click **Optimize**. JCVIQ pulls the transcript, thumbnail, and a few video frames, then returns titles, description, tags, chapters, thumbnail concepts, a scorecard, and repurposing ideas. Copy anything with the 📋 button.
+
+**On a Studio edit page:** same analysis, but each suggestion gets an apply button that writes directly into the form field.
+
+**On the Studio video list:** JCVIQ can queue your videos and optimize them in sequence.
 
 ---
 
-## 🔒 Security
+## Troubleshooting
 
-- ✅ API key stored **locally only** (not on servers)
-- ✅ Only talks to Google Gemini API
-- ✅ Never shares your data
-- ✅ Delete API key anytime from Chrome settings
-
----
-
-## 💡 Free Tier Details
-
-Google Gemini API is **free**:
-- 60 requests per minute
-- Unlimited requests per day
-- Perfect for personal channels!
-
-Get it: [Google AI Studio](https://aistudio.google.com/app/apikeys)
+| Problem | Fix |
+|---|---|
+| No panel on the page | Check the extension is enabled at `chrome://extensions/`, then refresh |
+| "API key not configured" | Panel → ⚙️ → paste key → save |
+| No response from Gemini | Verify the key and check you're under 60 requests/minute |
+| Results feel generic | Fill in the channel profile in settings |
 
 ---
 
-## ❓ Troubleshooting
+## Optional: local key fallback
 
-| Problem | Solution |
-|---------|----------|
-| "Navigate to YouTube video" | Make sure you're on a YouTube watch page |
-| "API key not configured" | Paste your API key in the setup dialog |
-| "No response from API" | Check internet, verify API key is valid |
-| Extension not showing | Check `chrome://extensions/` - make sure it's enabled |
-
----
-
-## 🎯 Pro Tips
-
-1. **Test on your own videos first** - see what works
-2. **A/B test suggestions** - compare title variations
-3. **Use on competitor videos** - learn what's working
-4. **Track results** - note which optimizations improve CTR
-5. **Batch optimize** - do multiple videos at once
-
----
-
-## 📊 Next Steps
-
-After getting JCVIQ working:
-
-1. Optimize your **last 5 videos**
-2. Test which suggestions **improve CTR most**
-3. Document the **patterns that work**
-4. Apply learnings to **new content**
-5. Scale the **successful strategies**
-
----
-
-**Ready?** Start with Step 1 above! 🎉
+`background.js` reads the key from `chrome.storage.local` first, then falls back to `config.js` if present. To use it, copy `config.example.js` to `config.js` and paste your key there. `config.js` is gitignored. Most people should just use the settings panel and skip this.
