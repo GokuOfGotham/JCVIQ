@@ -13,11 +13,11 @@ try {
 }
 
 const API_BASE = 'https://generativelanguage.googleapis.com';
-const DEFAULT_MODEL = 'gemini-2.5-flash';
-const MODELS = new Set(['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.5-flash-lite']);
+const DEFAULT_MODEL = 'gemini-3.8-flash';
+const MODELS = new Set(['gemini-3.8-flash', 'gemini-4-argon', 'gemini-3.5-flash-lite']);
 
-const DEFAULT_IMAGE_MODEL = 'gemini-2.5-flash-image';
-const IMAGE_MODELS = new Set(['gemini-2.5-flash-image', 'gemini-3-pro-image-preview']);
+const DEFAULT_IMAGE_MODEL = 'gemini-nano-banana-2.1';
+const IMAGE_MODELS = new Set(['gemini-nano-banana-2.1', 'gemini-3-pro-image']);
 // YouTube only ever renders a thumbnail in one of these two shapes.
 const ASPECTS = new Set(['16:9', '9:16']);
 

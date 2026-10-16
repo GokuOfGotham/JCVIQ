@@ -68,7 +68,7 @@ Generating a 16:9 image for a Short puts the subject behind the like and comment
 
 Results can be downloaded, regenerated, or in Studio pushed straight into the thumbnail upload field. Image models still misspell overlay text, so check it before you publish.
 
-The image model is configurable in Settings (Gemini 2.5 Flash Image by default, 3 Pro Image for higher quality). Image generation is billed per image, separately from the text analysis.
+The image model is configurable in Settings (Nano Banana 2.1 by default, Nano Banana Pro for higher quality). Image generation is billed per image, separately from the text analysis.
 
 ---
 
@@ -98,7 +98,7 @@ On a watch page nothing can be applied, so everything is copy-to-clipboard. That
 
 ## Model configuration
 
-Settings offers Gemini 2.5 Flash (default), 2.5 Pro and 2.5 Flash-Lite, plus a Google Search grounding toggle.
+Settings offers Gemini 3.8 Flash (default), Gemini 4 Argon and Gemini 3.5 Flash-Lite, plus a Google Search grounding toggle.
 
 Search grounding researches what is currently working in the niche, but the Gemini API does not allow the Search tool and a structured response schema in the same request. So with search **on**, the schema is described in the prompt and the reply goes through a repair pass for the unescaped newlines, trailing commas and truncated objects that models occasionally emit. With search **off**, the request uses a real `responseSchema` and the JSON is guaranteed well-formed. Both paths land on the same object.
 

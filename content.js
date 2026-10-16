@@ -1942,12 +1942,12 @@ function renderSettings() {
 	api.append(field('API key', keyRow, 'Stored only in this browser. Get a free key at aistudio.google.com/apikey.'));
 
 	const model = el('select');
-	[['gemini-2.5-flash', 'Gemini 2.5 Flash — fast (default)'], ['gemini-2.5-pro', 'Gemini 2.5 Pro — deeper, slower'], ['gemini-2.5-flash-lite', 'Gemini 2.5 Flash-Lite — cheapest']].forEach(([val, label]) => {
+	[['gemini-3.8-flash', 'Gemini 3.8 Flash — fast (default)'], ['gemini-4-argon', 'Gemini 4 Argon — deeper, slower'], ['gemini-3.5-flash-lite', 'Gemini 3.5 Flash-Lite — cheapest']].forEach(([val, label]) => {
 		const o = el('option', null, label);
 		o.value = val;
 		model.append(o);
 	});
-	model.value = s.model || 'gemini-2.5-flash';
+	model.value = s.model || 'gemini-3.8-flash';
 	api.append(field('Model', model));
 
 	const search = el('label', 'jc-check');
@@ -1959,14 +1959,14 @@ function renderSettings() {
 
 	const imageModel = el('select');
 	[
-		['gemini-2.5-flash-image', 'Gemini 2.5 Flash Image — fast (default)'],
-		['gemini-3-pro-image-preview', 'Gemini 3 Pro Image — higher quality, slower']
+		['gemini-nano-banana-2.1', 'Nano Banana 2.1 — fast (default)'],
+		['gemini-3-pro-image', 'Nano Banana Pro — higher quality, slower']
 	].forEach(([val, label]) => {
 		const o = el('option', null, label);
 		o.value = val;
 		imageModel.append(o);
 	});
-	imageModel.value = s.imageModel || 'gemini-2.5-flash-image';
+	imageModel.value = s.imageModel || 'gemini-nano-banana-2.1';
 	api.append(field('Thumbnail image model', imageModel, 'Used by the generator on the Thumbnail tab. Billed per image.'));
 	v.append(api);
 
