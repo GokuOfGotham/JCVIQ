@@ -667,3 +667,17 @@
 /* Docked/floating panels are position:relative/fixed already; the drawer is fixed. */
 #jcviq-panel.jc-drawer { position: fixed; }
 #jcviq-panel.jc-floating { position: fixed; }
+
+/* ---------------- Research sources (search grounding) ---------------- */
+
+#jcviq-panel .jc-sources-list { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; }
+#jcviq-panel .jc-sources-list .jc-label { margin-bottom: 2px; }
+#jcviq-panel .jc-src-link {
+	color: var(--jc-accent);
+	font-size: 12px;
+	text-decoration: none;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+#jcviq-panel .jc-src-link:hover { text-decoration: underline; }

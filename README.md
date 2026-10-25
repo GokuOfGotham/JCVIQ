@@ -2,7 +2,7 @@
 
 A Chrome extension that puts a Gemini-powered optimization panel inside YouTube and YouTube Studio. It reads what your video actually contains — your script, the rendered video file, captions and the thumbnail — then generates packaging you can apply with one click.
 
-No popup. The panel mounts into the page: docked in the right column on a watch page, and as a right-hand drawer in Studio.
+No popup. The panel mounts into the page: docked in the right column on a watch page, and as a right-hand drawer in Studio. The toolbar icon shows or hides it.
 
 ---
 
@@ -68,7 +68,7 @@ Generating a 16:9 image for a Short puts the subject behind the like and comment
 
 Results can be downloaded, regenerated, or in Studio pushed straight into the thumbnail upload field. Image models still misspell overlay text, so check it before you publish.
 
-The image model is configurable in Settings (Gemini 2.5 Flash Image by default, 3 Pro Image for higher quality). Image generation is billed per image, separately from the text analysis.
+The image model is configurable in Settings: Nano Banana 2.1 (`gemini-nano-banana-2.1`, the default), Nano Banana 2 Lite (`gemini-3.1-flash-lite-image`, cheapest) and Nano Banana Pro (`gemini-3-pro-image`, best at rendering overlay text). The 2.1 and Pro models render at 2K, so a 16:9 thumbnail comes out above YouTube's recommended 1280×720; Lite renders at 1K. Image generation is billed per image, separately from the text analysis.
 
 ---
 
@@ -90,7 +90,7 @@ On a Studio edit page, every suggestion has an apply button that writes into the
 
 **Auto-apply is off by default.** Turn it on in Settings if you want every analysis to write straight into the form. Nothing is ever saved without you clicking Save in Studio, except during a mass update.
 
-**Mass update** walks the Studio video list, opening each video in a background tab, analyzing it, applying the top suggestions and saving. It asks for confirmation first, because it overwrites and saves metadata on every video listed. Scripts and uploaded videos are matched by video ID, so add them on each video's edit page beforehand if you want grounded results.
+**Mass update** walks the Studio video list, opening each video in a background tab, analyzing it, applying the top suggestions and saving. It asks for confirmation first, because it overwrites and saves metadata on every video listed. Scripts and uploaded videos are matched by video ID, so add them on each video's edit page beforehand if you want grounded results. A **Cancel run** button is shown while it works. A video whose analysis fails is skipped so the run carries on; a missing API key stops the run outright; and a queue left behind by a browser that closed mid-run is discarded after two hours rather than resuming the next time you open one of those videos.
 
 On a watch page nothing can be applied, so everything is copy-to-clipboard. That includes competitors' videos.
 
@@ -98,11 +98,26 @@ On a watch page nothing can be applied, so everything is copy-to-clipboard. That
 
 ## Model configuration
 
-Settings offers Gemini 2.5 Flash (default), 2.5 Pro and 2.5 Flash-Lite, plus a Google Search grounding toggle.
+Settings offers four text models, a thinking depth, and a Google Search grounding toggle.
 
-Search grounding researches what is currently working in the niche, but the Gemini API does not allow the Search tool and a structured response schema in the same request. So with search **on**, the schema is described in the prompt and the reply goes through a repair pass for the unescaped newlines, trailing commas and truncated objects that models occasionally emit. With search **off**, the request uses a real `responseSchema` and the JSON is guaranteed well-formed. Both paths land on the same object.
+| Model | When to use it |
+|---|---|
+| Gemini 3.8 Flash (default) | Fast, current, has a free tier. The right choice for almost every run. |
+| Gemini 3.5 Flash-Lite | Cheapest. Good for mass updates across a back catalogue. |
+| Gemini 3.1 Pro Preview | Deeper reasoning, slower. Paid tier only. |
+| Gemini 4 Argon | Flagship. Paid tier only, and the most expensive per run. |
 
-Extended thinking is disabled (`thinkingBudget: 0`) because it eats the output budget and truncates the JSON, and this is an interactive workload.
+Google has closed the Gemini 2.5 models to new API users, so they are no longer offered. A saved 2.5 setting from an earlier version falls back to 3.8 Flash.
+
+**Thinking depth** maps to the Gemini `thinkingLevel` parameter (low, medium or high). Gemini 3 and 4 models cannot turn thinking off, so **low** is the default: it keeps an interactive run fast and leaves the output budget for the JSON. Raise it when the suggestions feel generic. Thinking tokens are billed as output and show in the token line under the AI assessment.
+
+**Search grounding** researches what is currently working in the niche. Gemini 3 and 4 models accept the Search tool together with a response schema, so the request always uses a real `responseSchema` and the JSON is well-formed. The pages the model consulted are listed under Research insights on the Strategy tab so the claims can be checked. If a model rejects the schema-plus-search combination, the extension falls back once to a prompt-described schema with a JSON repair pass, then to a schema without search, and tells you which happened.
+
+Sampling parameters are left at the model defaults. The Gemini 3 guide warns that lowering the temperature degrades output, and the newest models treat the old `temperature` / `topK` / `topP` settings as deprecated.
+
+### Long requests and Chrome's service worker
+
+Chrome stops an extension's service worker after 30 seconds without activity, when a `fetch()` takes more than 30 seconds to answer, and when a single message handler runs for more than five minutes. An analysis that watches a video can take several minutes, so the slow calls run as jobs: the panel starts one and polls for the result every two seconds, and the worker pings an extension API every 20 seconds while a request is in flight. Both reset Chrome's idle timer, and no handler ever approaches the five-minute limit.
 
 ---
 
@@ -155,13 +170,13 @@ JCVIQ/
 
 **content.js** builds and mounts the panel, manages the source inputs and the chunked upload, extracts metadata from watch and Studio pages, runs the deterministic audit, renders every tab, writes values into Studio fields, and orchestrates mass updates. Model output is rendered with `textContent`, never `innerHTML`, so a hostile transcript cannot inject markup.
 
-**background.js** resolves the API key, runs resumable uploads to the Files API, fetches captions and the thumbnail in parallel, builds the prompt, calls Gemini, and parses or repairs the returned JSON.
+**background.js** resolves the API key, runs resumable uploads to the Files API, fetches captions and the thumbnail in parallel, builds the prompt, calls Gemini as a polled job, parses or repairs the returned JSON, and reads the search sources and token counts out of the response.
 
 ---
 
 ## Privacy
 
-Your API key is stored in `chrome.storage.local` and goes nowhere except Google's Gemini endpoint. There is no backend and no telemetry. Host permissions are limited to `youtube.com`, `i.ytimg.com` and `generativelanguage.googleapis.com`.
+Your API key is stored in `chrome.storage.local` and goes nowhere except Google's Gemini endpoint, where it is sent as the `x-goog-api-key` request header rather than in the URL, so it stays out of request logs. There is no backend and no telemetry. The only Chrome permission is `storage`; host permissions are limited to `youtube.com`, `i.ytimg.com` and `generativelanguage.googleapis.com`. In Google AI Studio, restrict the key to the Generative Language API so it is useless anywhere else if it leaks.
 
 Uploading a video file sends it to Google's Gemini Files API. Google stores it for 48 hours and then deletes it. Settings has a **Forget uploaded videos** action that deletes them immediately.
 
@@ -187,6 +202,9 @@ The prompt marks the script, transcript and page metadata as untrusted data and 
 | Generated thumbnail is the wrong shape | The aspect badge shows what was detected. Let the player load, or set the content type to YouTube Short. |
 | Overlay text is misspelled in the image | Known limit of image models. Regenerate, shorten the overlay, or add the text yourself. |
 | "Could not find the thumbnail upload field" | Studio's markup changed or the section is collapsed. Download the image and upload it manually. |
+| "Chrome restarted the extension's background worker" | Rare. Chrome recycled the worker mid-request; run the analysis again. |
+| "Search grounding is not available for this model" | The run finished without live research. 3.8 Flash supports grounding; switch to it in Settings. |
+| "Gemini spent the whole output budget thinking" | Lower the thinking depth in Settings and run again. |
 
 ---
 

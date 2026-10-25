@@ -1,11 +1,9 @@
 {
   "manifest_version": 3,
   "name": "JCVIQ - YouTube AI Optimizer",
-  "version": "2.0",
+  "version": "2.1",
   "description": "AI YouTube optimizer: analyzes your script and video file with Gemini to generate titles, descriptions, tags, chapters and thumbnail concepts.",
   "permissions": [
-    "activeTab",
-    "scripting",
     "storage"
   ],
   "host_permissions": [
@@ -17,7 +15,7 @@
     "service_worker": "background.js"
   },
   "action": {
-    "default_title": "JCVIQ - open the panel on YouTube or Studio",
+    "default_title": "JCVIQ - show or hide the panel on YouTube or Studio",
     "default_icon": {
       "16": "images/icon16.png",
       "32": "images/icon32.png",
@@ -28,7 +26,8 @@
   "content_scripts": [
     {
       "matches": [
-        "https://*.youtube.com/*"
+        "https://www.youtube.com/*",
+        "https://studio.youtube.com/*"
       ],
       "js": [
         "content.js"
@@ -42,10 +41,11 @@
   "web_accessible_resources": [
     {
       "resources": [
-        "images/*"
+        "images/icon48.png"
       ],
       "matches": [
-        "https://*.youtube.com/*"
+        "https://www.youtube.com/*",
+        "https://studio.youtube.com/*"
       ]
     }
   ],

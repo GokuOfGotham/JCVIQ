@@ -18,11 +18,13 @@ Three steps, about five minutes. See [README.md](README.md) for what the extensi
 ## 3. Add your key
 
 1. Open any YouTube video, or a video's edit page in YouTube Studio
-2. The **panel appears on the page** — there is no popup and you do not click the toolbar icon
+2. The **panel appears on the page** — there is no popup. The toolbar icon only shows or hides the panel.
 3. Click the **settings** icon in the panel header
 4. Paste your key and click **Save settings**
 
 While you are in Settings, fill in the channel profile: niche, audience, tone, words to avoid, your call to action. It goes into every prompt and noticeably improves results.
+
+The defaults are Gemini 3.8 Flash with low thinking depth and Google Search grounding on. Flash-Lite is cheaper, 3.1 Pro Preview and 4 Argon go deeper but need a paid API tier. Raising the thinking depth makes runs slower and spends more output tokens; try it when the titles feel generic.
 
 ---
 
@@ -68,7 +70,7 @@ The extension also tries to grab a frame from the player and hand it to the mode
 
 When you have an image you like, **Download** it, or in Studio use **Set in Studio** to push it straight into the thumbnail field. Check the overlay text before publishing: image models still misspell words.
 
-Generated images are billed per image and are separate from the text analysis. Pick the image model in Settings.
+Generated images are billed per image and are separate from the text analysis. Pick the image model in Settings: Nano Banana 2.1 (default) and Nano Banana Pro render at 2K, which clears YouTube's 1280×720 recommendation; Nano Banana 2 Lite is the cheapest and renders at 1K.
 
 ---
 
@@ -80,7 +82,7 @@ Nothing is saved until you click Save in Studio.
 
 If you want every analysis to write into the form automatically, turn on **Auto-apply** in Settings. It is off by default on purpose.
 
-**Mass optimize** appears on the Studio video list. It opens each video in a background tab, analyzes it, applies the top suggestions and saves. It asks for confirmation first, because it overwrites metadata across your library.
+**Mass optimize** appears on the Studio video list. It opens each video in a background tab, analyzes it, applies the top suggestions and saves. It asks for confirmation first, because it overwrites metadata across your library. A **Cancel run** button appears while it works; a video whose analysis fails is skipped rather than stalling the run, and a run interrupted by closing the browser is dropped instead of resuming days later.
 
 ---
 
@@ -97,6 +99,8 @@ If you want every analysis to write into the form automatically, turn on **Auto-
 | No captions were used | YouTube served a transcript panel that fails to load, or the video has none. Add the script. |
 | Generated thumbnail is the wrong shape | Check the shape badge; let the player load, or set the content type to YouTube Short |
 | Overlay text is misspelled in the image | Regenerate, shorten the overlay, or add the text yourself |
+| "Chrome restarted the extension's background worker" | Rare; Chrome recycled the worker mid-request. Run the analysis again. |
+| "Search grounding is not available for this model" | The run completed without live research. Switch to 3.8 Flash in Settings to get it back. |
 
 ---
 

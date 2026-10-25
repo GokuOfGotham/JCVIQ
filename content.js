@@ -50,6 +50,8 @@ const S = {
 	ctxKey: '',
 	result: null,        // last optimization for this video
 	resultSources: null, // which sources fed it
+	resultExtras: null,  // search sources, token usage and model behind it
+	resultFor: '',       // sourceKey() the result belongs to
 	sources: { script: { text: '', name: '' }, video: null, thumb: null },
 	busy: false,
 	tab: 'overview',
@@ -104,6 +106,27 @@ function send(message) {
 			resolve({ error: 'The extension was reloaded. Refresh this page to reconnect.' });
 		}
 	});
+}
+
+// Slow calls (analysis, image generation) run as jobs in the worker: start
+// one, then poll until it finishes. Polling keeps the worker alive and never
+// holds a single message channel open for minutes, which Chrome would close.
+async function runJob(action, payload, opts = {}) {
+	const start = await send({ action, payload });
+	if (start.error || !start.jobId) return start;
+	const deadline = Date.now() + (opts.timeoutMs || 20 * 60 * 1000);
+	while (Date.now() < deadline) {
+		await sleep(opts.intervalMs || 2000);
+		const res = await send({ action: 'jobStatus', jobId: start.jobId });
+		if (res.jobRunning) continue;
+		if (res.jobMissing) return { error: 'Chrome restarted the extension\'s background worker mid-request. Run it again.' };
+		return res;
+	}
+	return { error: 'Timed out waiting for Gemini. Try again.' };
+}
+
+function sleep(ms) {
+	return new Promise((r) => setTimeout(r, ms));
 }
 
 function storageGet(keys) {
@@ -489,8 +512,8 @@ function detectAspect(m) {
 		const biggest = thumbs[thumbs.length - 1];
 		if (biggest.width && biggest.height) return biggest.width >= biggest.height ? '16:9' : '9:16';
 	}
-	// A vertical source under 60s is almost certainly a Short.
-	if (m && m.lengthSeconds && m.lengthSeconds <= 60 && (S.settings && S.settings.contentType) === '') return '16:9';
+	// Duration alone cannot tell a Short from a 60-second landscape clip, so
+	// with no other signal assume the common shape.
 	return '16:9';
 }
 
@@ -594,8 +617,10 @@ function auditMetadata({ title = '', description = '', tags = [], keyword = '', 
 		10, Boolean(kw));
 
 	const hashtags = (d.match(/(^|\s)#[\p{L}\p{N}_]+/gu) || []).length;
-	add('desc-hash', 'Hashtags', hashtags >= 1 && hashtags <= 15 ? 'pass' : hashtags > 15 ? 'fail' : 'fail',
-		`${hashtags} found · 1–3 ideal, YouTube ignores all of them above 15`, 5);
+	// YouTube shows the first three above the title and ignores every hashtag
+	// on a video that carries more than 60; well before that they read as spam.
+	add('desc-hash', 'Hashtags', hashtags >= 1 && hashtags <= 15 ? 'pass' : 'fail',
+		`${hashtags} found · 1–3 ideal (the first 3 show above the title); over 60 and YouTube ignores them all`, 5);
 
 	const hasChapters = /(^|\n)\s*0?0:00\b/.test(d);
 	add('desc-chapters', 'Chapters / timestamps', bool(hasChapters),
@@ -628,7 +653,7 @@ function suggestedMetadata(opt) {
 	if (!opt) return null;
 	return {
 		title: opt.titles && opt.titles.length ? opt.titles[0].title : '',
-		description: composeDescription(opt) + (opt.chapters && opt.chapters.length ? '\n\n' + opt.chapters.map((c) => `${c.timestamp} ${c.title}`).join('\n') : ''),
+		description: composeDescription(opt) + (chapterLines(opt, S.meta && S.meta.lengthSeconds) ? '\n\n' + chapterLines(opt, S.meta && S.meta.lengthSeconds) : ''),
 		tags: fitTagsToLimit(opt.tags || [])
 	};
 }
@@ -1120,6 +1145,7 @@ async function onVideoFile(e) {
 
 	const previous = S.sources.video;
 	if (previous && previous.name) send({ action: 'fileDelete', name: previous.name });
+	const uploadKey = sourceKey();
 
 	S.sources.video = { phase: 'uploading', progress: 0, fileName: file.name, size: file.size, mimeType: file.type || 'video/mp4', key: sourceKey() };
 	renderSources();
@@ -1136,25 +1162,35 @@ async function onVideoFile(e) {
 			const res = await send({ action: 'uploadChunk', uploadUrl: start.uploadUrl, offset, data, last });
 			if (res.error) throw new Error(res.error);
 			offset = end;
-			if (S.sources.video && S.sources.video.phase === 'uploading') {
+			if (S.sources.video && S.sources.video.phase === 'uploading' && sourceKey() === uploadKey) {
 				S.sources.video.progress = offset / file.size;
 				renderSources();
 			}
 			if (last) info = res.file;
 		}
 		if (!info || !info.uri) throw new Error('Upload finished but Gemini returned no file reference.');
-		S.sources.video = {
+		const uploaded = {
 			phase: info.state === 'ACTIVE' ? 'ready' : 'processing',
 			name: info.name, uri: info.uri, mimeType: info.mimeType || file.type || 'video/mp4',
-			fileName: file.name, size: file.size, expirationTime: info.expirationTime, key: sourceKey()
+			fileName: file.name, size: file.size, expirationTime: info.expirationTime, key: uploadKey
 		};
+		if (sourceKey() !== uploadKey) {
+			// The user moved to another video mid-upload. File it under the
+			// video it belongs to instead of attaching it to this page.
+			await persistSources(uploadKey, uploaded);
+			toast(`The upload of ${file.name} finished. It is saved on the video you started it from.`, 'warn', 7000);
+			return;
+		}
+		S.sources.video = uploaded;
 		await persistSources();
 		renderSources();
 		if (S.sources.video.phase === 'processing') pollVideo();
 		else toast('Video ready for analysis.');
 	} catch (err) {
-		S.sources.video = { phase: 'error', message: err.message || 'Upload failed', fileName: file.name, size: file.size };
-		renderSources();
+		if (sourceKey() === uploadKey) {
+			S.sources.video = { phase: 'error', message: err.message || 'Upload failed', fileName: file.name, size: file.size };
+			renderSources();
+		}
 		toast(err.message || 'Upload failed.', 'err', 6000);
 	}
 }
@@ -1166,6 +1202,7 @@ function pollVideo() {
 		const vf = S.sources.video;
 		if (!vf || vf.phase !== 'processing') return;
 		const res = await send({ action: 'fileStatus', name: vf.name });
+		if (S.sources.video !== vf) return; // the user moved on or replaced it
 		if (res.error) { toast(res.error, 'err'); return; }
 		if (res.missing) {
 			S.sources.video = null;
@@ -1208,13 +1245,20 @@ async function removeVideo() {
 
 /* ---- Sources persistence (per video) ---- */
 
-async function persistSources() {
+// Saves the script and video for the video on screen, or, when a slow upload
+// finishes after the user has moved on, the video only for the page it was
+// started on (forKey / forVideo), leaving the current page untouched.
+async function persistSources(forKey, forVideo) {
 	const { jcSources = {} } = await storageGet('jcSources');
-	const key = sourceKey();
-	const vf = S.sources.video;
+	const key = forKey || sourceKey();
+	const own = key === sourceKey();
+	const vf = own ? S.sources.video : forVideo;
+	const prev = jcSources[key] || {};
 	const entry = {
 		updated: Date.now(),
-		script: S.sources.script.text ? { text: S.sources.script.text, name: S.sources.script.name } : null,
+		script: own
+			? (S.sources.script.text ? { text: S.sources.script.text, name: S.sources.script.name } : null)
+			: (prev.script || null),
 		video: vf && (vf.phase === 'ready' || vf.phase === 'processing')
 			? { phase: vf.phase, name: vf.name, uri: vf.uri, mimeType: vf.mimeType, fileName: vf.fileName, size: vf.size, expirationTime: vf.expirationTime }
 			: null
@@ -1362,6 +1406,13 @@ function assessmentCard() {
 	if (src.transcript) used.push('captions');
 	if (src.thumbnail) used.push('thumbnail');
 	c.append(el('div', 'jc-hint', used.length ? `Grounded in: ${used.join(', ')}.` : 'Based on the title and description only — add a script or video for grounded results.'));
+	const extras = S.resultExtras || {};
+	const usage = extras.usage;
+	if (usage && (usage.input || usage.output)) {
+		const bits = [`${usage.input.toLocaleString()} in`, `${usage.output.toLocaleString()} out`];
+		if (usage.thoughts) bits.push(`${usage.thoughts.toLocaleString()} thinking`);
+		c.append(el('div', 'jc-hint', `Tokens: ${bits.join(' · ')}${extras.model ? ` · ${extras.model}` : ''}.`));
+	}
 
 	const actions = el('div', 'jc-actions');
 	actions.append(button('See titles', { small: true, onClick: () => setTab('titles') }));
@@ -1388,8 +1439,36 @@ function massCard() {
 	const no = button('Cancel', { small: true, onClick: () => { confirm.hidden = true; } });
 	confirm.append(yes, no);
 	btn.addEventListener('click', () => { confirm.hidden = false; });
-	c.append(btn, confirm);
+	// Shown only while a run is in progress. Without it a run that stalls
+	// (closed tab, Studio markup change) left the button disabled for good.
+	const cancelRun = button('Cancel run', {
+		small: true, icon: 'close',
+		onClick: async () => {
+			await send({ action: 'cancelMassUpdate' });
+			toast('Mass update cancelled. Videos already saved keep their new metadata.', 'warn', 6000);
+		}
+	});
+	cancelRun.dataset.jc = 'massCancel';
+	cancelRun.hidden = true;
+	c.append(btn, cancelRun, confirm);
+	// Reflect a run that is already going, e.g. after navigating back here.
+	storageGet('massUpdateQueue').then(({ massUpdateQueue = [] }) => reflectMassQueue(massUpdateQueue.length, true));
 	return c;
+}
+
+function reflectMassQueue(remaining, initial) {
+	const btn = q('massBtn');
+	const cancel = q('massCancel');
+	if (!btn) return;
+	const label = btn.querySelector('span:last-child');
+	if (remaining > 0) {
+		btn.disabled = true;
+		if (label) label.textContent = `Processing ${remaining} video${remaining === 1 ? '' : 's'} in the background…`;
+	} else if (!initial) {
+		btn.disabled = false;
+		if (label) label.textContent = 'Mass update complete';
+	}
+	if (cancel) cancel.hidden = remaining <= 0;
 }
 
 /* ============================ Titles ============================ */
@@ -1669,19 +1748,16 @@ async function generateThumbnailFor(key, concept, btn) {
 	const reference = wantRef ? await captureReferenceFrame() : null;
 	const profile = S.settings.channelProfile || {};
 
-	const res = await send({
-		action: 'generateThumbnail',
-		payload: {
-			aspect: (S.meta && S.meta.aspect) || '16:9',
-			overlay: concept.overlay,
-			idea: concept.idea,
-			moment: concept.moment,
-			extra: key === 'custom' ? '' : (S.customPrompt.extra || ''),
-			videoTitle: (S.result && S.result.titles && S.result.titles.length ? S.result.titles[0].title : (S.meta && S.meta.title)) || '',
-			keyword: currentKeyword(),
-			niche: profile.niche || '',
-			reference
-		}
+	const res = await runJob('generateThumbnail', {
+		aspect: (S.meta && S.meta.aspect) || '16:9',
+		overlay: concept.overlay,
+		idea: concept.idea,
+		moment: concept.moment,
+		extra: key === 'custom' ? '' : (S.customPrompt.extra || ''),
+		videoTitle: (S.result && S.result.titles && S.result.titles.length ? S.result.titles[0].title : (S.meta && S.meta.title)) || '',
+		keyword: currentKeyword(),
+		niche: profile.niche || '',
+		reference
 	});
 
 	S.generating[key] = false;
@@ -1692,10 +1768,16 @@ async function generateThumbnailFor(key, concept, btn) {
 		toast(res.error, 'err', 8000);
 		return;
 	}
+	if (!res.image || !res.image.data) {
+		if (slot) slot.innerHTML = '';
+		toast('Gemini returned no image. Try again.', 'err');
+		return;
+	}
 	S.generated[key] = {
 		src: `data:${res.image.mimeType};base64,${res.image.data}`,
 		mimeType: res.image.mimeType,
 		aspect: res.aspect,
+		size: res.size || '',
 		usedReference: Boolean(reference),
 		overlay: concept.overlay || ''
 	};
@@ -1727,7 +1809,7 @@ function renderGenerated(key) {
 		}
 	}));
 	slot.append(row);
-	slot.append(el('div', 'jc-hint', `${g.aspect}${g.usedReference ? ' · matched to a frame from the player' : ''}. Image models can misspell overlay text — check it before you upload.`));
+	slot.append(el('div', 'jc-hint', `${g.aspect}${g.size ? ' · ' + g.size : ''}${g.usedReference ? ' · matched to a frame from the player' : ''}. Image models can misspell overlay text — check it before you upload.`));
 }
 
 function conceptAt(i) {
@@ -1812,14 +1894,26 @@ function renderStrategy() {
 	[
 		['Opening hook', opt.hook],
 		['Content strategy', opt.contentStrategy],
-		['Research insights', opt.researchInsights],
+		['Research insights', opt.researchInsights, 'research'],
 		['End screens & cards', opt.endScreenTips]
-	].forEach(([label, body]) => {
+	].forEach(([label, body, kind]) => {
 		if (!body) return;
 		const c = card(label, null, { actions: [copyButton(body)] });
 		c.append(paragraph(body));
+		if (kind === 'research') {
+			const sources = groundingSources();
+			if (sources) c.append(sources);
+		}
 		v.append(c);
 	});
+	if (!opt.researchInsights) {
+		const sources = groundingSources();
+		if (sources) {
+			const c = card('Research sources', null);
+			c.append(sources);
+			v.append(c);
+		}
+	}
 
 	const rp = opt.repurposing;
 	if (rp) {
@@ -1861,6 +1955,28 @@ function renderStrategy() {
 	}
 }
 
+// The pages Google Search grounding consulted, so the research can be checked
+// rather than taken on faith. Only http(s) links are rendered.
+function groundingSources() {
+	const g = S.resultExtras && S.resultExtras.grounding;
+	const links = (g && Array.isArray(g.links) ? g.links : []).filter((l) => l && /^https?:\/\//i.test(String(l.uri || '')));
+	if (!links.length) return null;
+	const wrap = el('div', 'jc-sources-list');
+	wrap.append(el('div', 'jc-label', 'Sources Gemini consulted'));
+	links.forEach((link) => {
+		const a = el('a', 'jc-src-link', String(link.title || link.uri));
+		a.href = link.uri;
+		a.target = '_blank';
+		a.rel = 'noopener noreferrer';
+		a.title = link.uri;
+		wrap.append(a);
+	});
+	if (Array.isArray(g.queries) && g.queries.length) {
+		wrap.append(el('div', 'jc-hint', `Searched: ${g.queries.join(' · ')}`));
+	}
+	return wrap;
+}
+
 /* ============================ History ============================ */
 
 async function renderHistory() {
@@ -1889,15 +2005,22 @@ async function renderHistory() {
 		row.addEventListener('click', () => {
 			S.result = entry.optimization;
 			S.resultSources = entry.sources || {};
+			S.resultExtras = entry.extras || null;
+			// Tag the result with its own video so navigating away clears it,
+			// and say so when it is not the video on screen.
+			S.resultFor = entry.videoId || 'draft';
 			renderResults();
 			setTab('titles');
+			if (entry.videoId && entry.videoId !== sourceKey()) {
+				toast(`Showing a past analysis of "${entry.title || entry.videoId}", not the video on this page.`, 'warn', 6000);
+			}
 		});
 		c.append(row);
 	});
 	v.append(c);
 }
 
-async function saveToHistory(m, optimization, sources) {
+async function saveToHistory(m, optimization, sources, extras) {
 	try {
 		const { history = [] } = await storageGet('history');
 		history.unshift({
@@ -1906,6 +2029,7 @@ async function saveToHistory(m, optimization, sources) {
 			title: m.title || 'Untitled',
 			date: Date.now(),
 			sources,
+			extras: extras || null,
 			optimization
 		});
 		await storageSet({ history: history.slice(0, HISTORY_LIMIT) });
@@ -1941,33 +2065,45 @@ function renderSettings() {
 	keyRow.append(key, show);
 	api.append(field('API key', keyRow, 'Stored only in this browser. Get a free key at aistudio.google.com/apikey.'));
 
+	// The option lists live in background.js (loaded by loadSettings), so the
+	// worker and the panel can never disagree about what is offered.
+	const opts = S.options || {};
+	const MODEL_OPTIONS = opts.models || [['gemini-3.8-flash', 'Gemini 3.8 Flash (default)']];
 	const model = el('select');
-	[['gemini-2.5-flash', 'Gemini 2.5 Flash — fast (default)'], ['gemini-2.5-pro', 'Gemini 2.5 Pro — deeper, slower'], ['gemini-2.5-flash-lite', 'Gemini 2.5 Flash-Lite — cheapest']].forEach(([val, label]) => {
+	MODEL_OPTIONS.forEach(([val, label]) => {
 		const o = el('option', null, label);
 		o.value = val;
 		model.append(o);
 	});
-	model.value = s.model || 'gemini-2.5-flash';
-	api.append(field('Model', model));
+	model.value = MODEL_OPTIONS.some(([val]) => val === s.model) ? s.model : (opts.defaultModel || MODEL_OPTIONS[0][0]);
+	api.append(field('Model', model, 'Google has closed the Gemini 2.5 models to new API users; an older 2.5 setting falls back to the default.'));
+
+	const THINKING_OPTIONS = opts.thinking || [['low', 'Fast — low thinking (default)']];
+	const thinking = el('select');
+	THINKING_OPTIONS.forEach(([val, label]) => {
+		const o = el('option', null, label);
+		o.value = val;
+		thinking.append(o);
+	});
+	thinking.value = THINKING_OPTIONS.some(([val]) => val === s.thinkingLevel) ? s.thinkingLevel : (opts.defaultThinking || 'low');
+	api.append(field('Thinking depth', thinking, 'How long the model reasons before it writes. Deeper is slower and spends more output tokens.'));
 
 	const search = el('label', 'jc-check');
 	const searchCb = el('input');
 	searchCb.type = 'checkbox';
 	searchCb.checked = s.useSearch !== false;
-	search.append(searchCb, el('span', null, 'Google Search grounding (researches the niche; slower, less strict JSON)'));
+	search.append(searchCb, el('span', null, 'Google Search grounding (researches the niche and lists the pages it used; slower)'));
 	api.append(search);
 
+	const IMAGE_OPTIONS = opts.imageModels || [['gemini-nano-banana-2.1', 'Nano Banana 2.1 (default)']];
 	const imageModel = el('select');
-	[
-		['gemini-2.5-flash-image', 'Gemini 2.5 Flash Image — fast (default)'],
-		['gemini-3-pro-image-preview', 'Gemini 3 Pro Image — higher quality, slower']
-	].forEach(([val, label]) => {
+	IMAGE_OPTIONS.forEach(([val, label]) => {
 		const o = el('option', null, label);
 		o.value = val;
 		imageModel.append(o);
 	});
-	imageModel.value = s.imageModel || 'gemini-2.5-flash-image';
-	api.append(field('Thumbnail image model', imageModel, 'Used by the generator on the Thumbnail tab. Billed per image.'));
+	imageModel.value = IMAGE_OPTIONS.some(([val]) => val === s.imageModel) ? s.imageModel : (opts.defaultImageModel || IMAGE_OPTIONS[0][0]);
+	api.append(field('Thumbnail image model', imageModel, 'Used by the generator on the Thumbnail tab. Billed per image. 2K output clears YouTube\'s 1280×720 recommendation.'));
 	v.append(api);
 
 	// Behaviour
@@ -2015,6 +2151,7 @@ function renderSettings() {
 				...S.settings,
 				geminiApiKey: key.value.trim(),
 				model: model.value,
+				thinkingLevel: thinking.value,
 				imageModel: imageModel.value,
 				useSearch: searchCb.checked,
 				autoApply: autoCb.checked,
@@ -2023,6 +2160,7 @@ function renderSettings() {
 			await storageSet({
 				geminiApiKey: S.settings.geminiApiKey,
 				model: S.settings.model,
+				thinkingLevel: S.settings.thinkingLevel,
 				imageModel: S.settings.imageModel,
 				useSearch: S.settings.useSearch,
 				autoApply: S.settings.autoApply,
@@ -2050,9 +2188,11 @@ function renderSettings() {
 
 async function loadSettings() {
 	S.settings = await storageGet([
-		'geminiApiKey', 'model', 'imageModel', 'useSearch', 'autoApply', 'channelProfile',
+		'geminiApiKey', 'model', 'thinkingLevel', 'imageModel', 'useSearch', 'autoApply', 'channelProfile',
 		'contentType', 'watchByUrl', 'panelCollapsed'
 	]);
+	const options = await send({ action: 'getOptions' });
+	S.options = options && !options.error ? options : null;
 }
 
 /* ============================ Analyze ============================ */
@@ -2070,6 +2210,7 @@ async function runAnalyze() {
 	if (S.busy) return;
 	refreshMeta({ silent: true });
 	const m = S.meta;
+	const runKey = sourceKey();
 	if (!m || (!m.title && !S.sources.script.text)) {
 		toast(IS_STUDIO
 			? 'Could not read the title field. Wait for the video details to load, or add a script.'
@@ -2080,6 +2221,14 @@ async function runAnalyze() {
 	if (vf && (vf.phase === 'uploading' || vf.phase === 'processing')) {
 		toast('The video is still uploading or processing. Wait for "Ready" before analyzing.', 'warn', 5000);
 		return;
+	}
+
+	// Know up front whether this run is one step of a mass update, so a
+	// failure still moves the queue along instead of stalling it for good.
+	let inMass = false;
+	if (IS_STUDIO && S.mode === 'single' && m.videoId) {
+		const { massUpdateQueue = [] } = await storageGet('massUpdateQueue');
+		inMass = massUpdateQueue.length > 0 && massUpdateQueue[0] === m.videoId;
 	}
 
 	S.busy = true;
@@ -2111,37 +2260,53 @@ async function runAnalyze() {
 		transcriptOverride
 	};
 
-	const res = await send({ action: 'analyze', payload });
+	const res = await runJob('analyze', payload);
 
 	S.busy = false;
 	setStatus('');
 	if (btn) btn.disabled = false;
 
-	if (res.error) {
-		toast(res.error, 'err', 8000);
-		if (/api key/i.test(res.error)) toggleView('settings');
+	const failed = res.error || !res.optimization;
+	if (failed) {
+		toast(res.error || 'Gemini returned nothing usable. Try again.', 'err', 8000);
+		const keyProblem = /api key/i.test(res.error || '');
+		if (keyProblem) toggleView('settings');
+		if (inMass) {
+			// A missing key will fail every video, so stop the run; anything
+			// else skips this video and carries on with the rest.
+			console.warn('JCVIQ: mass update step failed for', m.videoId, res.error);
+			setTimeout(() => send({ action: keyProblem ? 'cancelMassUpdate' : 'massUpdateNext' }), 1500);
+		}
 		return;
 	}
-	if (!res.optimization) {
-		toast('Gemini returned nothing usable. Try again.', 'err');
+
+	const extras = { grounding: res.grounding || null, usage: res.usage || null, model: res.model || '' };
+	// The analysis can take minutes. If the user moved to another video in the
+	// meantime, keep the result in History but never show or apply it here.
+	if (!S.panel || sourceKey() !== runKey) {
+		saveToHistory(m, res.optimization, res.sources, extras);
+		if (S.panel) toast(`The analysis for "${m.title || runKey}" finished after you left it. It is saved in History.`, 'warn', 8000);
+		if (inMass) setTimeout(() => send({ action: 'massUpdateNext' }), 500);
 		return;
 	}
 
 	S.result = res.optimization;
 	S.resultSources = res.sources || {};
+	S.resultExtras = extras;
 	S.resultFor = m.videoId || 'draft';
 	renderResults();
 	setTab('overview');
 	if (res.note) toast(res.note, 'warn', 9000);
 	else toast('Analysis complete.');
 
-	saveToHistory(m, res.optimization, res.sources);
+	saveToHistory(m, res.optimization, res.sources, S.resultExtras);
 
-	if (IS_STUDIO && S.mode === 'single') {
-		const { massUpdateQueue = [] } = await storageGet('massUpdateQueue');
-		const inMass = massUpdateQueue.length > 0 && massUpdateQueue[0] === m.videoId;
-		if (inMass || S.settings.autoApply) {
-			applyAll(res.optimization, { quiet: inMass });
+	if (IS_STUDIO && S.mode === 'single' && (inMass || S.settings.autoApply)) {
+		if (res.optimization._truncated) {
+			// An incomplete result must never be written to YouTube.
+			if (inMass) setTimeout(() => send({ action: 'massUpdateNext' }), 1500);
+		} else {
+			await applyAll(res.optimization, { quiet: inMass });
 			if (inMass) setTimeout(() => clickSaveAndContinue(), 800);
 		}
 	}
@@ -2183,44 +2348,79 @@ function setStudioTextbox(kind, value) {
 	return true;
 }
 
-function setStudioTags(tagsArray) {
-	tagsArray = fitTagsToLimit(tagsArray);
-	if (!tagsArray.length) return false;
+// Replaces the video's tags. The old chips are removed first, otherwise the new
+// ones pile on top and push the total past YouTube's 500 characters, which
+// leaves Studio's Save button disabled.
+async function setStudioTags(tagsArray) {
+	const clean = (tagsArray || []).map((t) => String(t || '').replace(/[,<>]/g, ' ').replace(/\s+/g, ' ').trim()).filter(Boolean);
+	if (!clean.length) return false;
 	// The tags field may be hidden behind "Show more".
 	const showMore = Array.from(document.querySelectorAll('ytcp-button#toggle-button'))
 		.find((b) => (b.textContent || '').toLowerCase().includes('show more'));
-	if (showMore) showMore.click();
-	setTimeout(() => {
-		const tagInput = document.querySelector('ytcp-free-text-chip-bar #text-input') ||
-			document.querySelector('input[aria-label="Tags"]') ||
-			document.querySelector('input[aria-label="Add tag"]');
-		if (!tagInput) return;
-		tagInput.focus();
-		// A trailing comma makes Studio split the pasted string into chips.
-		const val = tagsArray.join(', ') + ',';
-		const ok = document.execCommand('insertText', false, val);
-		if (!ok) {
-			tagInput.value = val;
-			tagInput.dispatchEvent(new Event('input', { bubbles: true }));
-			tagInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13, bubbles: true }));
-		}
-	}, 300);
+	if (showMore) { showMore.click(); await sleep(350); }
+
+	document.querySelectorAll('ytcp-free-text-chip-bar ytcp-chip').forEach((chip) => {
+		const del = chip.querySelector('#delete-icon, [aria-label*="emove" i], [aria-label*="elete" i], button');
+		if (del) realClick(del);
+	});
+	await waitFor(() => getStudioTags().length === 0, 2000, 150);
+
+	// Whatever could not be removed still counts against the budget.
+	const left = getStudioTags();
+	const room = YT_TAGS_MAX - (left.length ? left.join(',').length + 1 : 0);
+	const fitted = fitTagsToLimit(clean, Math.max(0, room));
+	if (!fitted.length) return false;
+
+	const tagInput = document.querySelector('ytcp-free-text-chip-bar #text-input') ||
+		document.querySelector('input[aria-label="Tags"]') ||
+		document.querySelector('input[aria-label="Add tag"]');
+	if (!tagInput) return false;
+	tagInput.focus();
+	// A trailing comma makes Studio split the pasted string into chips.
+	const val = fitted.join(', ') + ',';
+	const ok = document.execCommand('insertText', false, val);
+	if (!ok) {
+		tagInput.value = val;
+		tagInput.dispatchEvent(new Event('input', { bubbles: true }));
+		tagInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13, bubbles: true }));
+	}
 	return true;
 }
 
-function applyToStudio(kind, value) {
+async function applyToStudio(kind, value) {
 	if (!IS_STUDIO) { copyValue(typeof value === 'string' ? value : (value || []).join(', ')); return; }
-	const ok = kind === 'tags' ? setStudioTags(value) : setStudioTextbox(kind, value);
+	const ok = kind === 'tags' ? await setStudioTags(value) : setStudioTextbox(kind, value);
 	const label = kind.charAt(0).toUpperCase() + kind.slice(1);
 	toast(ok ? `${label} applied in Studio.` : `Could not find the ${kind} field.`, ok ? 'ok' : 'err');
 }
 
-function applyAll(opt, opts = {}) {
+// Chapters YouTube will actually accept: at least three, starting at 0:00,
+// ascending, at least 10 s apart, and inside the video. Returns the lines to
+// append to the description, or '' when the list would not qualify.
+function chapterLines(opt, lengthSec) {
+	const rows = ((opt && opt.chapters) || [])
+		.map((c) => ({ ts: String(c.timestamp || '').trim(), title: String(c.title || '').trim() }))
+		.filter((c) => /^\d{1,2}(:\d{2}){1,2}$/.test(c.ts) && c.title);
+	const kept = [];
+	let last = -Infinity;
+	for (const c of rows) {
+		const sec = tsToSeconds(c.ts);
+		if (kept.length === 0 && sec !== 0) continue;
+		if (sec - last < 10 && kept.length) continue;
+		if (lengthSec && sec >= lengthSec) continue;
+		kept.push(c);
+		last = sec;
+	}
+	return kept.length >= 3 ? kept.map((c) => `${c.ts} ${c.title}`).join('\n') : '';
+}
+
+async function applyAll(opt, opts = {}) {
 	let applied = 0;
 	if (opt.titles && opt.titles.length && setStudioTextbox('title', opt.titles[0].title)) applied++;
-	const desc = composeDescription(opt);
-	if (desc && setStudioTextbox('description', desc)) applied++;
-	if (opt.tags && opt.tags.length && setStudioTags(opt.tags)) applied++;
+	const chapters = chapterLines(opt, S.meta && S.meta.lengthSeconds);
+	const desc = composeDescription(opt) + (chapters ? '\n\n' + chapters : '');
+	if (desc.trim() && setStudioTextbox('description', desc)) applied++;
+	if (opt.tags && opt.tags.length && await setStudioTags(opt.tags)) applied++;
 	if (!opts.quiet) toast(applied ? 'Title, description and tags applied. Review, then Save in Studio.' : 'Could not find the Studio fields.', applied ? 'ok' : 'err', 5000);
 	refreshMeta({ silent: true });
 	return applied;
@@ -2279,30 +2479,35 @@ function clickSaveAndContinue() {
 
 chrome.storage.onChanged.addListener((changes) => {
 	if (!changes.massUpdateQueue) return;
-	const remaining = (changes.massUpdateQueue.newValue || []).length;
-	const btn = q('massBtn');
-	if (!btn) return;
-	if (remaining > 0) {
-		btn.disabled = true;
-		btn.querySelector('span:last-child').textContent = `Processing ${remaining} video${remaining === 1 ? '' : 's'} in the background…`;
-	} else {
-		btn.disabled = false;
-		btn.querySelector('span:last-child').textContent = 'Mass update complete';
-	}
+	reflectMassQueue((changes.massUpdateQueue.newValue || []).length, false);
 });
+
+const MASS_QUEUE_MAX_AGE = 2 * 60 * 60 * 1000;
 
 function checkMassUpdateQueue() {
 	if (!IS_STUDIO) return;
 	const match = location.pathname.match(/\/video\/([^/]+)\/edit/);
 	if (!match) return;
 	const videoId = match[1];
-	storageGet('massUpdateQueue').then(({ massUpdateQueue = [] }) => {
-		if (massUpdateQueue.length && massUpdateQueue[0] === videoId) {
-			// Give Studio time to populate the form, then run.
-			setTimeout(() => { if (S.panel) runAnalyze(); }, 3500);
+	storageGet(['massUpdateQueue', 'massUpdateStarted']).then(({ massUpdateQueue = [], massUpdateStarted = 0 }) => {
+		if (!massUpdateQueue.length || massUpdateQueue[0] !== videoId) return;
+		// A queue older than two hours is left over from a run that died
+		// (browser closed, tab crashed). Drop it rather than silently saving
+		// metadata the user has long forgotten they asked for.
+		if (!massUpdateStarted || Date.now() - massUpdateStarted > MASS_QUEUE_MAX_AGE) {
+			storageSet({ massUpdateQueue: [], massUpdateStarted: 0 });
+			return;
 		}
+		// Give Studio time to populate the form, then run.
+		setTimeout(() => { if (S.panel) runAnalyze(); }, 3500);
 	});
 }
+
+// The toolbar button asks the page to show or hide the panel.
+chrome.runtime.onMessage.addListener((msg) => {
+	if (!msg || msg.action !== 'togglePanel' || !S.panel) return;
+	setCollapsed(!S.panel.classList.contains('jc-collapsed'));
+});
 
 /* ============================ Clipboard ============================ */
 
@@ -2341,7 +2546,7 @@ async function refreshMeta(opts = {}) {
 	const videoChanged = sourceKey() !== prevKey || opts.force;
 	S.ctxKey = key;
 	if (videoChanged) {
-		if (S.resultFor && S.resultFor !== sourceKey()) { S.result = null; S.resultSources = null; }
+		if (S.resultFor && S.resultFor !== sourceKey()) { S.result = null; S.resultSources = null; S.resultExtras = null; }
 		// Generated images belong to the video they were made for.
 		S.generated = {};
 		S.generating = {};
