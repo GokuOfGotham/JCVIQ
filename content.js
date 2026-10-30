@@ -38,7 +38,8 @@ const ICONS = {
 	pen: '<svg viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>',
 	refresh: '<svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.96 7.96 0 0 0 12 4a8 8 0 1 0 7.73 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>',
 	eye: '<svg viewBox="0 0 24 24"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-8a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"/></svg>',
-	play: '<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>'
+	play: '<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>',
+	brain: '<svg viewBox="0 0 24 24"><path d="M9.5 3A4.5 4.5 0 0 0 5.18 6.26 4 4 0 0 0 3 9.8c0 1.24.57 2.35 1.46 3.08A4 4 0 0 0 4 14.5a4 4 0 0 0 3.16 3.91A4.5 4.5 0 0 0 11.5 21h.5V3h-2.5zm5 0H12v18h.5a4.5 4.5 0 0 0 4.34-2.59A4 4 0 0 0 20 14.5c0-.58-.16-1.13-.46-1.62A4 4 0 0 0 21 9.8a4 4 0 0 0-2.18-3.54A4.5 4.5 0 0 0 14.5 3z"/></svg>'
 };
 
 // Single mutable app state.
@@ -50,7 +51,7 @@ const S = {
 	ctxKey: '',
 	result: null,        // last optimization for this video
 	resultSources: null, // which sources fed it
-	resultExtras: null,  // search sources, token usage and model behind it
+	resultExtras: null,  // search sources, token usage, neuroBrain and model behind it
 	resultFor: '',       // sourceKey() the result belongs to
 	sources: { script: { text: '', name: '' }, video: null, thumb: null },
 	busy: false,
@@ -59,9 +60,13 @@ const S = {
 	settings: {},
 	pollTimer: null,
 	scriptSaveTimer: null,
-	generated: {},        // concept index (or 'custom') -> generated image
+	generated: {},        // concept index (or 'custom' / 'neuro') -> generated image
 	generating: {},       // in-flight guards, same keys
-	customPrompt: { idea: '', overlay: '', extra: '', useReference: true }
+	customPrompt: { idea: '', overlay: '', extra: '', useReference: true },
+	neuroHealth: { connected: false, endpoint: null, health: null, enabled: true },
+	neuroHookLab: { hook: '', useThumb: true, busy: false, report: null },
+	neuroAdvisorLab: { domain: 'video', prompt: '', busy: false, advice: null },
+	neuroKbLab: { query: '', busy: false, results: null }
 };
 
 /* ============================ Small helpers ============================ */
@@ -108,9 +113,9 @@ function send(message) {
 	});
 }
 
-// Slow calls (analysis, image generation) run as jobs in the worker: start
-// one, then poll until it finishes. Polling keeps the worker alive and never
-// holds a single message channel open for minutes, which Chrome would close.
+// Slow calls (analysis, image generation, NeuroBrain) run as jobs in the worker:
+// start one, then poll until it finishes. Polling keeps the worker alive and
+// never holds a single message channel open for minutes, which Chrome would close.
 async function runJob(action, payload, opts = {}) {
 	const start = await send({ action, payload });
 	if (start.error || !start.jobId) return start;
@@ -118,7 +123,10 @@ async function runJob(action, payload, opts = {}) {
 	while (Date.now() < deadline) {
 		await sleep(opts.intervalMs || 2000);
 		const res = await send({ action: 'jobStatus', jobId: start.jobId });
-		if (res.jobRunning) continue;
+		if (res.jobRunning) {
+			if (res.step && typeof opts.onStep === 'function') opts.onStep(res.step);
+			continue;
+		}
 		if (res.jobMissing) return { error: 'Chrome restarted the extension\'s background worker mid-request. Run it again.' };
 		return res;
 	}
@@ -702,6 +710,7 @@ function buildPanel() {
 				<img alt="" src="${chrome.runtime.getURL('images/icon48.png')}">
 				<span class="jc-brand-name">JCVIQ</span>
 				<span class="jc-brand-tag">AI</span>
+				<span class="jc-brand-neuro" data-jc="neuroBadge" title="NeuroBrain OS (CORTEX-5) status">CORTEX-5</span>
 			</div>
 			<div class="jc-hd-actions">
 				<button class="jc-iconbtn" data-jc="btnHistory" title="History">${ICONS.history}</button>
@@ -712,9 +721,10 @@ function buildPanel() {
 		<div class="jc-tabs" data-jc="tabs">
 			<button class="jc-tab" data-tab="overview">Overview</button>
 			<button class="jc-tab" data-tab="titles">Titles</button>
-			<button class="jc-tab" data-tab="metadata">Description</button>
-			<button class="jc-tab" data-tab="thumbnail">Thumbnail</button>
+			<button class="jc-tab" data-tab="metadata">Desc</button>
+			<button class="jc-tab" data-tab="thumbnail">Thumb</button>
 			<button class="jc-tab" data-tab="strategy">Strategy</button>
+			<button class="jc-tab" data-tab="brain">Brain</button>
 		</div>
 		<div class="jc-views" data-jc="views">
 			<div class="jc-view" data-view="overview"></div>
@@ -722,6 +732,7 @@ function buildPanel() {
 			<div class="jc-view" data-view="metadata"></div>
 			<div class="jc-view" data-view="thumbnail"></div>
 			<div class="jc-view" data-view="strategy"></div>
+			<div class="jc-view" data-view="brain"></div>
 			<div class="jc-view" data-view="history"></div>
 			<div class="jc-view" data-view="settings"></div>
 		</div>
@@ -939,6 +950,8 @@ function renderOverview() {
 	if (S.result) {
 		v.append(scoreCard());
 		v.append(assessmentCard());
+		const nb = currentNeuro();
+		if (nb && nb.viral_and_behavioral_metrics) v.append(neuroOverviewCard(nb));
 	}
 }
 
@@ -1059,6 +1072,31 @@ function renderSources() {
 				: 'Available once the video has an ID';
 		const row = sourceRow('captions', 'Captions', status);
 		row.classList.add('muted');
+		c.append(row);
+	}
+
+	// NeuroBrain OS (CORTEX-5)
+	{
+		const nh = S.neuroHealth || {};
+		const enabled = S.settings.useNeuroBrain !== false;
+		let status = 'Checking dell3010:8765…';
+		let tone = '';
+		if (!enabled) {
+			status = 'Disabled in Settings';
+			tone = 'muted';
+		} else if (nh.connected) {
+			const kb = (nh.health && nh.health.knowledge_base) || {};
+			status = `Ready · ${nh.endpoint || 'dell3010:8765'}${kb.total_chunks ? ` · ${kb.total_chunks} Brain Facts chunks` : ''}`;
+			tone = 'on';
+		} else {
+			status = 'Standby — built-in CORTEX-5 0–5s brain rules active';
+			tone = 'muted';
+		}
+		const row = sourceRow('brain', 'NeuroBrain OS (CORTEX-5)', status);
+		if (tone) row.classList.add(tone);
+		const actions = row.querySelector('.jc-src-actions');
+		actions.append(button('Brain Lab', { small: true, onClick: () => setTab('brain') }));
+		actions.append(iconButton('refresh', 'Test NeuroBrain connection', () => refreshNeuroHealth(true)));
 		c.append(row);
 	}
 
@@ -1381,6 +1419,10 @@ function scoreCard() {
 	return c;
 }
 
+function currentNeuro() {
+	return (S.resultExtras && S.resultExtras.neuroBrain) || (S.result && S.result.neuroBrain) || null;
+}
+
 function assessmentCard() {
 	const opt = S.result;
 	const sc = opt.scores || {};
@@ -1400,6 +1442,7 @@ function assessmentCard() {
 	}
 	const src = S.resultSources || {};
 	const used = [];
+	if (src.neuroBrain) used.push(`NeuroBrain CORTEX-5${typeof src.neuroBrain === 'string' ? ` (${src.neuroBrain.replace(/^https?:\/\//, '')})` : ''}`);
 	if (src.script) used.push('script');
 	if (src.video === 'file') used.push('video file');
 	if (src.video === 'url') used.push('video (URL)');
@@ -1416,9 +1459,48 @@ function assessmentCard() {
 
 	const actions = el('div', 'jc-actions');
 	actions.append(button('See titles', { small: true, onClick: () => setTab('titles') }));
+	if (currentNeuro()) {
+		actions.append(button('Brain report', { small: true, icon: 'brain', onClick: () => setTab('brain') }));
+	}
 	if (IS_STUDIO && S.mode === 'single') {
 		actions.append(button('Apply title, description & tags', { small: true, primary: true, icon: 'pen', onClick: () => applyAll(opt) }));
 	}
+	c.append(actions);
+	return c;
+}
+
+function neuroOverviewCard(nb) {
+	const vm = nb.viral_and_behavioral_metrics || {};
+	const de = nb.dominant_emotion || {};
+	const c = card('NeuroBrain CORTEX-5 (0–5s Brain Model)', 'brain', {
+		actions: [badge('CORTEX-5', 'ok')]
+	});
+	const rings = el('div', 'jc-rings');
+	if (typeof vm.gatekeeper_0_3s_score === 'number') rings.append(ring(vm.gatekeeper_0_3s_score, 'Gatekeeper (0–3s)'));
+	if (typeof vm.multiplier_3s_plus_score === 'number') rings.append(ring(vm.multiplier_3s_plus_score, 'Multiplier (3s+)'));
+	if (typeof vm.predicted_retention_3s_pct === 'number') {
+		const retBox = el('div', 'jc-kw');
+		retBox.append(el('div', 'jc-kw-label', '3s Retention Est.'));
+		retBox.append(el('div', 'jc-kw-val', `${vm.predicted_retention_3s_pct}%`));
+		rings.append(retBox);
+	}
+	c.append(rings);
+
+	if (typeof vm.overall_neuro_impact_score === 'number') c.append(bar('Overall Neuro Impact', vm.overall_neuro_impact_score));
+	if (typeof vm.memory_ltp_encoding_score === 'number') c.append(bar('LTP Memory Encoding', vm.memory_ltp_encoding_score));
+
+	const badges = el('div', 'jc-badges');
+	if (vm.strategy_classification) {
+		const isViral = /emotional hook|viral/i.test(vm.strategy_classification);
+		badges.append(badge(vm.strategy_classification, isViral ? 'ok' : 'warn'));
+	}
+	if (de.viral_archetype) badges.append(badge(de.viral_archetype, 'ok'));
+	if (de.primary) badges.append(badge(de.primary));
+	if (badges.childNodes.length) c.append(badges);
+
+	if (nb.summary) c.append(paragraph(nb.summary, 'jc-reason'));
+	const actions = el('div', 'jc-actions');
+	actions.append(button('Full 0–5s neural timeline & 10 regions', { small: true, icon: 'brain', onClick: () => setTab('brain') }));
 	c.append(actions);
 	return c;
 }
@@ -1677,6 +1759,48 @@ function renderThumbnail() {
 		opt.thumbnailConcepts.forEach((_, i) => { if (S.generated[i]) renderGenerated(i); });
 	}
 
+	const nb = currentNeuro();
+	const neuroThumbPrompt = nb && nb.actionable_optimization && nb.actionable_optimization.visual_or_thumbnail_prompt;
+	if (neuroThumbPrompt) {
+		const nc = card('CORTEX-5 Neuro Thumbnail Direction', 'brain', {
+			actions: [copyButton(neuroThumbPrompt)]
+		});
+		nc.append(paragraph(neuroThumbPrompt, 'jc-sug-reason'));
+		const ht = nb.hijack_triggers || {};
+		const hb = el('div', 'jc-badges');
+		if (ht.direct_eye_contact_micro_expressions) hb.append(badge(`FFA Eye Lock ${ht.direct_eye_contact_micro_expressions.score}`, scoreTone(ht.direct_eye_contact_micro_expressions.score)));
+		if (ht.prediction_error_pattern_interrupt) hb.append(badge(`Pattern Interrupt ${ht.prediction_error_pattern_interrupt.score}`, scoreTone(ht.prediction_error_pattern_interrupt.score)));
+		if (ht.visceral_sensory_cues) hb.append(badge(`Visceral Cue ${ht.visceral_sensory_cues.score}`, scoreTone(ht.visceral_sensory_cues.score)));
+		if (ht.evolutionary_salience) hb.append(badge(`Low-Road Salience ${ht.evolutionary_salience.score}`, scoreTone(ht.evolutionary_salience.score)));
+		if (hb.childNodes.length) nc.append(hb);
+
+		const defaultOverlay = (opt.thumbnailConcepts && opt.thumbnailConcepts[0] && opt.thumbnailConcepts[0].textOverlay) || '';
+		const genRow = el('div', 'jc-actions');
+		genRow.append(button('Generate neuro image', {
+			small: true, primary: true, icon: 'image',
+			onClick: (e) => generateThumbnailFor('neuro', {
+				overlay: defaultOverlay,
+				idea: neuroThumbPrompt,
+				moment: ''
+			}, e.currentTarget)
+		}));
+		genRow.append(button('Load into custom generator', {
+			small: true,
+			onClick: () => {
+				S.customPrompt.idea = neuroThumbPrompt;
+				if (!S.customPrompt.overlay && defaultOverlay) S.customPrompt.overlay = defaultOverlay;
+				renderThumbnail();
+				toast('Loaded CORTEX-5 visual prompt into custom generator.');
+			}
+		}));
+		nc.append(genRow);
+		const slot = el('div', 'jc-gen-slot');
+		slot.dataset.jc = 'gen-neuro';
+		nc.append(slot);
+		v.append(nc);
+		if (S.generated.neuro) renderGenerated('neuro');
+	}
+
 	v.append(customGeneratorCard());
 	if (S.generated.custom) renderGenerated('custom');
 }
@@ -1747,12 +1871,15 @@ async function generateThumbnailFor(key, concept, btn) {
 	const wantRef = key === 'custom' ? S.customPrompt.useReference !== false : true;
 	const reference = wantRef ? await captureReferenceFrame() : null;
 	const profile = S.settings.channelProfile || {};
+	const nb = currentNeuro();
+	const neuroPrompt = (nb && nb.actionable_optimization && nb.actionable_optimization.visual_or_thumbnail_prompt) || '';
 
 	const res = await runJob('generateThumbnail', {
 		aspect: (S.meta && S.meta.aspect) || '16:9',
 		overlay: concept.overlay,
 		idea: concept.idea,
 		moment: concept.moment,
+		neuroPrompt,
 		extra: key === 'custom' ? '' : (S.customPrompt.extra || ''),
 		videoTitle: (S.result && S.result.titles && S.result.titles.length ? S.result.titles[0].title : (S.meta && S.meta.title)) || '',
 		keyword: currentKeyword(),
@@ -1813,6 +1940,13 @@ function renderGenerated(key) {
 }
 
 function conceptAt(i) {
+	if (i === 'neuro') {
+		const nb = currentNeuro();
+		const prompt = nb && nb.actionable_optimization && nb.actionable_optimization.visual_or_thumbnail_prompt;
+		if (!prompt) return null;
+		const list = S.result && S.result.thumbnailConcepts;
+		return { overlay: (list && list[0] && list[0].textOverlay) || '', idea: prompt, moment: '' };
+	}
 	const list = S.result && S.result.thumbnailConcepts;
 	if (!list || !list[i]) return null;
 	return { overlay: list[i].textOverlay || '', idea: list[i].idea || '', moment: list[i].moment || '' };
@@ -1889,6 +2023,31 @@ function renderStrategy() {
 		c.append(chips([opt.primaryKeyword, ...(opt.secondaryKeywords || [])].filter(Boolean), { highlightFirst: true }));
 		if (opt.keywordStrategy) c.append(paragraph(opt.keywordStrategy));
 		v.append(c);
+	}
+
+	const nb = currentNeuro();
+	const f5 = nb && nb.actionable_optimization && nb.actionable_optimization.five_second_formula_rewrite;
+	if (f5 && (f5.sec_0_to_1_5_sensory_hook || f5.sec_1_5_to_3_0_emotional_stake || f5.sec_3_0_to_5_0_unanswered_question)) {
+		const copyAll = [
+			f5.sec_0_to_1_5_sensory_hook ? `0.0–1.5s Sensory Hook: ${f5.sec_0_to_1_5_sensory_hook}` : '',
+			f5.sec_1_5_to_3_0_emotional_stake ? `1.5–3.0s Emotional Stake: ${f5.sec_1_5_to_3_0_emotional_stake}` : '',
+			f5.sec_3_0_to_5_0_unanswered_question ? `3.0–5.0s Unanswered Question: ${f5.sec_3_0_to_5_0_unanswered_question}` : ''
+		].filter(Boolean).join('\n\n');
+		const fc = card('CORTEX-5 5-Second Hook Formula', 'brain', { actions: [copyButton(copyAll)] });
+		[
+			['0.0–1.5s · Sensory Hook (Low-Road & P300)', f5.sec_0_to_1_5_sensory_hook],
+			['1.5–3.0s · Emotional Stake (Insula & Mirror Neurons)', f5.sec_1_5_to_3_0_emotional_stake],
+			['3.0–5.0s · Unanswered Question (PFC Lock)', f5.sec_3_0_to_5_0_unanswered_question]
+		].forEach(([phaseLabel, phaseText], idx) => {
+			if (!phaseText) return;
+			const row = el('div', 'jc-sug');
+			row.append(el('div', 'jc-sug-num', String(idx + 1)));
+			const b = el('div', 'jc-sug-body');
+			b.append(el('div', 'jc-sug-text', phaseLabel), el('div', 'jc-sug-reason', phaseText));
+			row.append(b);
+			fc.append(row);
+		});
+		v.append(fc);
 	}
 
 	[
@@ -1977,6 +2136,476 @@ function groundingSources() {
 	return wrap;
 }
 
+/* ============================ NeuroBrain OS (CORTEX-5) Tab ============================ */
+
+async function refreshNeuroHealth(notify = false, customUrl = undefined) {
+	const res = await send({ action: 'neuroHealth', customUrl });
+	if (res && !res.error) {
+		S.neuroHealth = {
+			connected: Boolean(res.connected),
+			endpoint: res.endpoint || null,
+			health: res.health || null,
+			enabled: S.settings.useNeuroBrain !== false
+		};
+	}
+	updateNeuroHeaderBadge();
+	renderSources();
+	if (S.tab === 'brain') renderBrain();
+	if (notify) {
+		if (S.neuroHealth.connected) {
+			const kb = (S.neuroHealth.health && S.neuroHealth.health.knowledge_base) || {};
+			toast(`Connected to NeuroBrain OS (CORTEX-5) at ${S.neuroHealth.endpoint}${kb.total_chunks ? ` (${kb.total_chunks} Brain Facts chunks)` : ''}.`, 'ok', 4500);
+		} else {
+			toast('Could not reach dell3010:8765 (or failover IPs). Using built-in CORTEX-5 0–5s brain framework.', 'warn', 5000);
+		}
+	}
+}
+
+function updateNeuroHeaderBadge() {
+	const nb = q('neuroBadge');
+	if (!nb) return;
+	const enabled = S.settings.useNeuroBrain !== false;
+	const connected = Boolean(S.neuroHealth && S.neuroHealth.connected);
+	nb.classList.toggle('on', enabled && connected);
+	nb.classList.toggle('off', !enabled);
+	nb.title = !enabled
+		? 'NeuroBrain OS (CORTEX-5) disabled in Settings'
+		: connected
+			? `NeuroBrain OS (CORTEX-5) active · ${S.neuroHealth.endpoint}`
+			: 'NeuroBrain OS (CORTEX-5) · built-in 0–5s framework (dell3010 offline)';
+}
+
+function renderBrain() {
+	const v = view('brain');
+	if (!v) return;
+	v.innerHTML = '';
+
+	// 1. Server & Knowledge Hub Card
+	const nh = S.neuroHealth || {};
+	const enabled = S.settings.useNeuroBrain !== false;
+	const statusBadge = !enabled
+		? badge('Disabled', 'bad')
+		: nh.connected
+			? badge(`Online · ${(nh.endpoint || 'dell3010:8765').replace(/^https?:\/\//, '')}`, 'ok')
+			: badge('Standby · Built-in rules', 'warn');
+
+	const srv = card('NeuroBrain OS (CORTEX-5)', 'brain', {
+		actions: [
+			statusBadge,
+			iconButton('refresh', 'Test connection to dell3010:8765', () => refreshNeuroHealth(true))
+		]
+	});
+	const kb = (nh.health && nh.health.knowledge_base) || {};
+	srv.append(paragraph(
+		nh.connected
+			? `Connected to ${nh.endpoint} (${(nh.health && nh.health.host) || 'dell3010'}). Grounding titles, 0–5s hooks, thumbnails and retention strategy in Society for Neuroscience 'Brain Facts' (${kb.total_pages || 94} pages · ${kb.total_chunks || 435} chunks · ${kb.total_glossary_terms || 136} glossary terms) + 5 live Open Neuroscience APIs.`
+			: 'Automatic failover across http://dell3010:8765, http://192.168.1.208:8765 and http://100.75.229.66:8765. Built-in CORTEX-5 0–5s visual emotion rules remain active even when off-network.',
+		'jc-hint'
+	));
+	const linkRow = el('div', 'jc-actions');
+	const dashUrl = nh.endpoint || 'http://dell3010:8765';
+	const openDash = button('Open CORTEX-5 Dashboard', {
+		small: true,
+		onClick: () => window.open(dashUrl, '_blank', 'noopener')
+	});
+	const openDocs = button('API Docs', {
+		small: true,
+		onClick: () => window.open(`${dashUrl}/docs`, '_blank', 'noopener')
+	});
+	linkRow.append(openDash, openDocs);
+	srv.append(linkRow);
+	v.append(srv);
+
+	// 2. Full Video 0-5s Simulation Report (when available from Analyze video)
+	const nb = currentNeuro();
+	if (nb) {
+		renderNeuroReportCards(v, nb);
+	} else {
+		const hintCard = card('Video 0–5s Neural Simulation', null);
+		hintCard.append(paragraph('Click "Analyze video" on the Overview tab to run a full 10-region, 0–5s neural timeline simulation on this video and ground every title, hook and thumbnail suggestion in CORTEX-5.', 'jc-hint'));
+		const goBtn = el('div', 'jc-actions');
+		goBtn.append(button('Analyze this video', { small: true, primary: true, icon: 'bolt', onClick: () => { setTab('overview'); runAnalyze(); } }));
+		hintCard.append(goBtn);
+		v.append(hintCard);
+	}
+
+	// 3. Interactive Fast 0-5s Hook & Thumbnail Evaluator (/api/hook-score)
+	v.append(buildNeuroHookLabCard());
+
+	// 4. Interactive Universal Behavior, Persuasion & Content Advisor (/api/advise)
+	v.append(buildNeuroAdvisorLabCard());
+
+	// 5. Society for Neuroscience 'Brain Facts' PDF Search (/api/knowledge/search)
+	v.append(buildNeuroKbLabCard());
+}
+
+function renderNeuroReportCards(container, nb) {
+	// Viral & Behavioral Metrics
+	const vm = nb.viral_and_behavioral_metrics;
+	const de = nb.dominant_emotion;
+	if (vm) {
+		const mc = card('0–5s Viral & Behavioral Metrics', 'bolt');
+		const rings = el('div', 'jc-rings');
+		if (typeof vm.gatekeeper_0_3s_score === 'number') rings.append(ring(vm.gatekeeper_0_3s_score, 'Gatekeeper (0–3s)'));
+		if (typeof vm.multiplier_3s_plus_score === 'number') rings.append(ring(vm.multiplier_3s_plus_score, 'Multiplier (3s+)'));
+		if (typeof vm.predicted_retention_3s_pct === 'number') {
+			const ret = el('div', 'jc-kw');
+			ret.append(el('div', 'jc-kw-label', '3s Retention Est.'), el('div', 'jc-kw-val', `${vm.predicted_retention_3s_pct}%`));
+			rings.append(ret);
+		}
+		mc.append(rings);
+		if (typeof vm.overall_neuro_impact_score === 'number') mc.append(bar('Overall Neuro Impact', vm.overall_neuro_impact_score));
+		if (typeof vm.memory_ltp_encoding_score === 'number') mc.append(bar('LTP Memory Encoding', vm.memory_ltp_encoding_score));
+
+		const bRow = el('div', 'jc-badges');
+		if (vm.strategy_classification) {
+			bRow.append(badge(vm.strategy_classification, /emotional hook|viral/i.test(vm.strategy_classification) ? 'ok' : 'warn'));
+		}
+		if (de && de.viral_archetype) bRow.append(badge(de.viral_archetype, 'ok'));
+		if (de && de.primary) bRow.append(badge(`Emotion: ${de.primary}`));
+		if (de && de.arousal_level) bRow.append(badge(de.arousal_level));
+		if (bRow.childNodes.length) mc.append(bRow);
+
+		if (nb.summary) mc.append(paragraph(nb.summary, 'jc-summary'));
+		if (vm.diagnosis) mc.append(paragraph(vm.diagnosis, 'jc-reason'));
+		container.append(mc);
+	}
+
+	// 5-Second Formula Rewrite
+	const ao = nb.actionable_optimization || {};
+	const f5 = ao.five_second_formula_rewrite;
+	if (f5 && (f5.sec_0_to_1_5_sensory_hook || f5.sec_1_5_to_3_0_emotional_stake || f5.sec_3_0_to_5_0_unanswered_question)) {
+		const copyAll = [
+			f5.sec_0_to_1_5_sensory_hook ? `0.0–1.5s Sensory Hook: ${f5.sec_0_to_1_5_sensory_hook}` : '',
+			f5.sec_1_5_to_3_0_emotional_stake ? `1.5–3.0s Emotional Stake: ${f5.sec_1_5_to_3_0_emotional_stake}` : '',
+			f5.sec_3_0_to_5_0_unanswered_question ? `3.0–5.0s Unanswered Question: ${f5.sec_3_0_to_5_0_unanswered_question}` : ''
+		].filter(Boolean).join('\n\n');
+		const fc = card('5-Second Hook Formula Rewrite', null, { actions: [copyButton(copyAll)] });
+		[
+			['0.0–1.5s · Sensory Hook (Low-Road & P300)', f5.sec_0_to_1_5_sensory_hook],
+			['1.5–3.0s · Emotional Stake (Insula & Mirror Neurons)', f5.sec_1_5_to_3_0_emotional_stake],
+			['3.0–5.0s · Unanswered Question (PFC Lock)', f5.sec_3_0_to_5_0_unanswered_question]
+		].forEach(([lbl, txt], idx) => {
+			if (!txt) return;
+			const row = el('div', 'jc-sug');
+			row.append(el('div', 'jc-sug-num', String(idx + 1)));
+			const body = el('div', 'jc-sug-body');
+			body.append(el('div', 'jc-sug-text', lbl), el('div', 'jc-sug-reason', txt));
+			row.append(body);
+			fc.append(row);
+		});
+		container.append(fc);
+	}
+
+	// 4 Fast Hijack Triggers
+	const ht = nb.hijack_triggers;
+	if (ht && typeof ht === 'object') {
+		const hc = card('4 Fast Neural Hijack Triggers', null);
+		[
+			['Direct Eye & Micro-Expressions (FFA 170ms)', ht.direct_eye_contact_micro_expressions],
+			['Prediction Error / Pattern Interrupt', ht.prediction_error_pattern_interrupt],
+			['Visceral Sensory Cues (Insula 1.5s)', ht.visceral_sensory_cues],
+			['Evolutionary Salience (Low Road 0–120ms)', ht.evolutionary_salience]
+		].forEach(([label, item]) => {
+			if (!item) return;
+			const row = el('div', 'jc-sug');
+			const body = el('div', 'jc-sug-body');
+			body.append(bar(label.split(' (')[0], Number(item.score || 0)));
+			if (item.analysis) body.append(el('div', 'jc-sug-reason', item.analysis));
+			row.append(body);
+			hc.append(row);
+		});
+		container.append(hc);
+	}
+
+	// 0-5s Timeline Phases
+	if (Array.isArray(nb.timeline_phases) && nb.timeline_phases.length) {
+		const tc = card('0–5s Neurological Timeline', null, { count: nb.timeline_phases.length });
+		nb.timeline_phases.forEach((ph) => {
+			if (!ph) return;
+			const row = el('div', 'jc-sug');
+			const body = el('div', 'jc-sug-body');
+			body.append(el('div', 'jc-sug-text', `${ph.time_window || ''} · ${ph.phase_name || ''}`));
+			if (Array.isArray(ph.active_region_ids) && ph.active_region_ids.length) {
+				body.append(chips(ph.active_region_ids));
+			}
+			if (ph.specific_stimulus_analysis) body.append(el('div', 'jc-sug-reason', ph.specific_stimulus_analysis));
+			if (ph.autonomic_body_response) body.append(el('div', 'jc-hint', `Autonomic reflex: ${ph.autonomic_body_response}`));
+			if (ph.conscious_feeling) body.append(el('div', 'jc-hint', `Conscious feeling: ${ph.conscious_feeling}`));
+			row.append(body);
+			tc.append(row);
+		});
+		container.append(tc);
+	}
+
+	// 10 Anatomical Brain Regions
+	if (Array.isArray(nb.region_activations) && nb.region_activations.length) {
+		const rc = card('10 Brain Region Activations', null, { count: nb.region_activations.length });
+		const sorted = [...nb.region_activations].sort((a, b) => (b.activation_score || 0) - (a.activation_score || 0));
+		sorted.forEach((reg) => {
+			if (!reg) return;
+			const row = el('div', 'jc-sug');
+			const body = el('div', 'jc-sug-body');
+			const name = reg.name || reg.id || 'Region';
+			body.append(bar(name.slice(0, 22), Number(reg.activation_score || 0)));
+			const detail = `${reg.peak_time_sec != null ? `Peak ${reg.peak_time_sec}s · ` : ''}${reg.what_it_is_doing || reg.primary_role || ''}`;
+			if (detail) body.append(el('div', 'jc-hint', detail));
+			row.append(body);
+			rc.append(row);
+		});
+		container.append(rc);
+	}
+
+	// 6 Neurochemicals
+	if (Array.isArray(nb.neurochemicals) && nb.neurochemicals.length) {
+		const nc = card('Neurochemical Profile', null, { count: nb.neurochemicals.length });
+		nb.neurochemicals.forEach((chem) => {
+			if (!chem) return;
+			const row = el('div', 'jc-sug');
+			const body = el('div', 'jc-sug-body');
+			body.append(bar(chem.short || chem.name || 'Neurochemical', Number(chem.level || 0)));
+			if (chem.effect) body.append(el('div', 'jc-hint', chem.effect));
+			row.append(body);
+			nc.append(row);
+		});
+		container.append(nc);
+	}
+
+	// Behavioral Advisory Playbook
+	if (Array.isArray(ao.behavioral_advisory_playbook) && ao.behavioral_advisory_playbook.length) {
+		const pc = card('Behavioral Advisory Playbook', null, { count: ao.behavioral_advisory_playbook.length });
+		ao.behavioral_advisory_playbook.forEach((item, i) => {
+			if (!item) return;
+			const row = el('div', 'jc-sug');
+			row.append(el('div', 'jc-sug-num', String(i + 1)));
+			const body = el('div', 'jc-sug-body');
+			body.append(el('div', 'jc-sug-text', item.title || ''));
+			if (item.neuro_mechanism) body.append(badge(item.neuro_mechanism, 'ok'));
+			if (item.advice) body.append(el('div', 'jc-sug-reason', item.advice));
+			row.append(body);
+			pc.append(row);
+		});
+		container.append(pc);
+	}
+
+	// Society for Neuroscience 'Brain Facts' PDF Evidence & 5 Open Neuro APIs
+	const pdf = nb.pdf_evidence;
+	const ext = nb.external_neuro_apis;
+	if ((pdf && Array.isArray(pdf.chunks) && pdf.chunks.length) || (ext && ext.platforms)) {
+		const ec = card('Brain Facts PDF & 5 Open Neuro APIs', 'doc');
+		if (pdf && Array.isArray(pdf.chunks) && pdf.chunks.length) {
+			pdf.chunks.slice(0, 4).forEach((chunk) => {
+				if (!chunk) return;
+				const row = el('div', 'jc-sug');
+				row.append(el('div', 'jc-sug-num', '§'));
+				const body = el('div', 'jc-sug-body');
+				body.append(el('div', 'jc-sug-text', chunk.source || chunk.chapter_title || 'Brain Facts PDF'));
+				body.append(el('div', 'jc-sug-reason', String(chunk.text || '').slice(0, 320) + (String(chunk.text || '').length > 320 ? '…' : '')));
+				row.append(body);
+				ec.append(row);
+			});
+		}
+		if (ext && ext.platforms && typeof ext.platforms === 'object') {
+			const pBadges = [];
+			Object.entries(ext.platforms).forEach(([pName, pData]) => {
+				const count = Array.isArray(pData && pData.results) ? pData.results.length : 0;
+				if (count > 0) pBadges.push(`${pName}: ${count}`);
+			});
+			if (pBadges.length) {
+				ec.append(el('div', 'jc-hint', `Live Open Neuroscience datasets matched: ${pBadges.join(' · ')}`));
+			}
+		}
+		container.append(ec);
+	}
+}
+
+function buildNeuroHookLabCard() {
+	const lab = S.neuroHookLab;
+	const c = card('Fast 0–5s Hook & Title Scorer', 'bolt');
+	c.append(el('div', 'jc-hint', 'Evaluate any candidate title, opening 5s hook or visual concept via POST /api/hook-score on dell3010.'));
+
+	const ta = el('textarea');
+	ta.rows = 3;
+	ta.placeholder = (S.meta && S.meta.title) || 'e.g. Close-up of wide terrified eyes as cracking lake ice gives way beneath their boots';
+	ta.value = lab.hook || (S.meta && S.meta.title) || '';
+	ta.addEventListener('input', () => { lab.hook = ta.value; });
+	c.append(field('Hook, title or 0–5s scene', ta));
+
+	const actions = el('div', 'jc-actions');
+	actions.append(button(lab.busy ? 'Scoring on CORTEX-5…' : 'Score 0–5s hook', {
+		small: true, primary: true, icon: 'bolt', disabled: lab.busy,
+		onClick: async () => {
+			const hookText = ta.value.trim();
+			if (!hookText) { toast('Enter a hook or title to score.', 'warn'); return; }
+			lab.hook = hookText;
+			lab.busy = true;
+			renderBrain();
+			const res = await runJob('neuroHookScore', {
+				hook: hookText,
+				goal: 'Maximize 0-3s YouTube thumb-stop (>80%) and 3s+ viral shares',
+				image_base64: S.sources.thumb ? S.sources.thumb.data : null,
+				image_mime: S.sources.thumb ? S.sources.thumb.mimeType : 'image/jpeg'
+			});
+			lab.busy = false;
+			if (res.error) {
+				toast(res.error, 'err', 6000);
+			} else {
+				lab.report = res.report;
+				toast('0–5s hook scored by CORTEX-5.', 'ok');
+			}
+			renderBrain();
+		}
+	}));
+	c.append(actions);
+
+	if (lab.report) {
+		const r = lab.report;
+		const m = r.metrics || {};
+		const box = el('div', 'jc-neuro-box');
+		const rings = el('div', 'jc-rings');
+		if (typeof m.gatekeeper_0_3s_score === 'number') rings.append(ring(m.gatekeeper_0_3s_score, 'Gatekeeper (0–3s)'));
+		if (typeof m.multiplier_3s_plus_score === 'number') rings.append(ring(m.multiplier_3s_plus_score, 'Multiplier (3s+)'));
+		box.append(rings);
+		if (m.strategy_classification) box.append(badge(m.strategy_classification, /emotional hook|viral/i.test(m.strategy_classification) ? 'ok' : 'warn'));
+		if (m.diagnosis) box.append(paragraph(m.diagnosis, 'jc-sug-reason'));
+		const f5 = r.five_second_formula_rewrite;
+		if (f5) {
+			if (f5.sec_0_to_1_5_sensory_hook) box.append(el('div', 'jc-hint', `0–1.5s: ${f5.sec_0_to_1_5_sensory_hook}`));
+			if (f5.sec_1_5_to_3_0_emotional_stake) box.append(el('div', 'jc-hint', `1.5–3s: ${f5.sec_1_5_to_3_0_emotional_stake}`));
+			if (f5.sec_3_0_to_5_0_unanswered_question) box.append(el('div', 'jc-hint', `3–5s: ${f5.sec_3_0_to_5_0_unanswered_question}`));
+		}
+		c.append(box);
+	}
+	return c;
+}
+
+function buildNeuroAdvisorLabCard() {
+	const lab = S.neuroAdvisorLab;
+	const c = card('Ask NeuroBrain Advisor (/api/advise)', 'brain');
+	c.append(el('div', 'jc-hint', 'Ask any human behavior, viewer psychology, retention, persuasion or thumbnail question.'));
+
+	const domSel = el('select');
+	[
+		['video', 'Video Retention & Hooks'],
+		['thumbnail', 'Thumbnail & Visual Salience'],
+		['psychology', 'Human Psychology & Behavior'],
+		['sales', 'Persuasion & Conversion'],
+		['general', 'General Neuroscience']
+	].forEach(([val, lbl]) => {
+		const o = el('option', null, lbl);
+		o.value = val;
+		domSel.append(o);
+	});
+	domSel.value = lab.domain || 'video';
+	domSel.addEventListener('change', () => { lab.domain = domSel.value; });
+	c.append(field('Domain', domSel));
+
+	const ta = el('textarea');
+	ta.rows = 3;
+	ta.placeholder = 'e.g. Why do viewers swipe away at second 4 of this niche and how do we lock their Prefrontal Cortex?';
+	ta.value = lab.prompt || '';
+	ta.addEventListener('input', () => { lab.prompt = ta.value; });
+	c.append(field('Question', ta));
+
+	const actions = el('div', 'jc-actions');
+	actions.append(button(lab.busy ? 'Asking NeuroBrain…' : 'Ask Brain Advisor', {
+		small: true, primary: true, icon: 'brain', disabled: lab.busy,
+		onClick: async () => {
+			const qText = ta.value.trim();
+			if (!qText) { toast('Enter a question for NeuroBrain Advisor.', 'warn'); return; }
+			lab.prompt = qText;
+			lab.busy = true;
+			renderBrain();
+			const res = await runJob('neuroAdvise', {
+				prompt: qText,
+				domain: lab.domain || 'video',
+				context: (S.meta && S.meta.title) ? `Current YouTube video: "${S.meta.title}"` : ''
+			});
+			lab.busy = false;
+			if (res.error) {
+				toast(res.error, 'err', 6000);
+			} else {
+				lab.advice = res.advice;
+				toast('NeuroBrain Advisor responded.', 'ok');
+			}
+			renderBrain();
+		}
+	}));
+	c.append(actions);
+
+	if (lab.advice) {
+		const a = lab.advice;
+		const box = el('div', 'jc-neuro-box');
+		if (a.headline) box.append(paragraph(a.headline, 'jc-summary'));
+		if (Array.isArray(a.primary_brain_circuits) && a.primary_brain_circuits.length) {
+			box.append(chips(a.primary_brain_circuits, { highlightFirst: true }));
+		}
+		if (a.neuroscience_explanation) box.append(paragraph(a.neuroscience_explanation, 'jc-sug-reason'));
+		(a.actionable_steps || []).forEach((st) => {
+			if (!st) return;
+			const row = el('div', 'jc-sug');
+			row.append(el('div', 'jc-sug-num', String(st.step || '•')));
+			const b = el('div', 'jc-sug-body');
+			b.append(el('div', 'jc-sug-text', st.action || ''));
+			if (st.why_it_works) b.append(el('div', 'jc-hint', st.why_it_works));
+			row.append(b);
+			box.append(row);
+		});
+		if (a.exact_words_or_script_to_use) {
+			box.append(el('div', 'jc-label', 'Exact script / phrasing to use'));
+			box.append(el('pre', 'jc-pre', a.exact_words_or_script_to_use));
+		}
+		c.append(box);
+	}
+	return c;
+}
+
+function buildNeuroKbLabCard() {
+	const lab = S.neuroKbLab;
+	const c = card('Search "Brain Facts" PDF Knowledge Base', 'doc');
+	const row = el('div', 'jc-inline-row');
+	const inp = el('input');
+	inp.type = 'text';
+	inp.placeholder = 'e.g. amygdala fear memory dopamine attention';
+	inp.value = lab.query || '';
+	inp.addEventListener('input', () => { lab.query = inp.value; });
+	const btn = button(lab.busy ? '…' : 'Search', {
+		small: true, disabled: lab.busy,
+		onClick: async () => {
+			const qText = inp.value.trim();
+			if (!qText) return;
+			lab.query = qText;
+			lab.busy = true;
+			renderBrain();
+			const res = await send({ action: 'neuroKnowledgeSearch', query: qText, topK: 4 });
+			lab.busy = false;
+			if (res.error) toast(res.error, 'err');
+			else lab.results = res.results;
+			renderBrain();
+		}
+	});
+	row.append(inp, btn);
+	c.append(row);
+
+	if (lab.results) {
+		const box = el('div', 'jc-neuro-box');
+		(lab.results.chunks || []).slice(0, 4).forEach((ch) => {
+			const item = el('div', 'jc-sug');
+			item.append(el('div', 'jc-sug-num', '§'));
+			const b = el('div', 'jc-sug-body');
+			b.append(el('div', 'jc-sug-text', ch.source || ch.chapter_title || 'Brain Facts'));
+			b.append(el('div', 'jc-sug-reason', String(ch.text || '').slice(0, 300) + '…'));
+			item.append(b);
+			box.append(item);
+		});
+		(lab.results.glossary || []).slice(0, 3).forEach((g) => {
+			box.append(el('div', 'jc-hint', `${g.term} (p.${g.page}): ${g.definition}`));
+		});
+		c.append(box);
+	}
+	return c;
+}
+
 /* ============================ History ============================ */
 
 async function renderHistory() {
@@ -1997,6 +2626,7 @@ async function renderHistory() {
 		const metaRow = el('div', 'jc-badges');
 		metaRow.append(el('span', 'jc-muted', timeAgo(entry.date)));
 		const src = entry.sources || {};
+		if (src.neuroBrain) metaRow.append(badge('CORTEX-5', 'ok'));
 		if (src.script) metaRow.append(badge('script', 'ok'));
 		if (src.video) metaRow.append(badge('video', 'ok'));
 		if (src.transcript) metaRow.append(badge('captions'));
@@ -2106,6 +2736,28 @@ function renderSettings() {
 	api.append(field('Thumbnail image model', imageModel, 'Used by the generator on the Thumbnail tab. Billed per image. 2K output clears YouTube\'s 1280×720 recommendation.'));
 	v.append(api);
 
+	// NeuroBrain OS (CORTEX-5)
+	const neuroCard = card('NeuroBrain OS (CORTEX-5)', 'brain');
+	const neuroCheck = el('label', 'jc-check');
+	const neuroCb = el('input');
+	neuroCb.type = 'checkbox';
+	neuroCb.checked = s.useNeuroBrain !== false;
+	neuroCheck.append(neuroCb, el('span', null, 'Ground titles, 0–5s hooks, thumbnails and retention strategy in NeuroBrain OS (CORTEX-5)'));
+	neuroCard.append(neuroCheck);
+
+	const neuroUrl = el('input');
+	neuroUrl.type = 'text';
+	neuroUrl.placeholder = 'http://dell3010:8765 (auto-failover to 192.168.1.208 & 100.75.229.66)';
+	neuroUrl.value = s.neuroBrainUrl || '';
+	neuroCard.append(field('NeuroBrain Server URL (optional override)', neuroUrl, 'Defaults automatically to http://dell3010:8765 with LAN (192.168.1.208:8765) and Tailscale (100.75.229.66:8765) failover.'));
+	const testRow = el('div', 'jc-actions');
+	testRow.append(button('Test NeuroBrain connection', {
+		small: true, icon: 'refresh',
+		onClick: () => refreshNeuroHealth(true, neuroUrl.value.trim())
+	}));
+	neuroCard.append(testRow);
+	v.append(neuroCard);
+
 	// Behaviour
 	const beh = card('Studio behaviour', null);
 	const auto = el('label', 'jc-check');
@@ -2154,6 +2806,8 @@ function renderSettings() {
 				thinkingLevel: thinking.value,
 				imageModel: imageModel.value,
 				useSearch: searchCb.checked,
+				useNeuroBrain: neuroCb.checked,
+				neuroBrainUrl: neuroUrl.value.trim(),
 				autoApply: autoCb.checked,
 				channelProfile: profile
 			};
@@ -2163,9 +2817,12 @@ function renderSettings() {
 				thinkingLevel: S.settings.thinkingLevel,
 				imageModel: S.settings.imageModel,
 				useSearch: S.settings.useSearch,
+				useNeuroBrain: S.settings.useNeuroBrain,
+				neuroBrainUrl: S.settings.neuroBrainUrl,
 				autoApply: S.settings.autoApply,
 				channelProfile: profile
 			});
+			refreshNeuroHealth(false);
 			toast('Settings saved.');
 			setTab('overview');
 		}
@@ -2183,16 +2840,18 @@ function renderSettings() {
 		}
 	}));
 	v.append(actions);
-	v.append(el('div', 'jc-footer', 'JCVIQ · Gemini-powered YouTube optimizer · no telemetry, no backend'));
+	v.append(el('div', 'jc-footer', 'JCVIQ · Gemini + NeuroBrain OS (CORTEX-5) YouTube optimizer'));
 }
 
 async function loadSettings() {
 	S.settings = await storageGet([
-		'geminiApiKey', 'model', 'thinkingLevel', 'imageModel', 'useSearch', 'autoApply', 'channelProfile',
+		'geminiApiKey', 'model', 'thinkingLevel', 'imageModel', 'useSearch',
+		'useNeuroBrain', 'neuroBrainUrl', 'autoApply', 'channelProfile',
 		'contentType', 'watchByUrl', 'panelCollapsed'
 	]);
 	const options = await send({ action: 'getOptions' });
 	S.options = options && !options.error ? options : null;
+	refreshNeuroHealth(false);
 }
 
 /* ============================ Analyze ============================ */
@@ -2204,6 +2863,7 @@ function renderResults() {
 	renderMetadata();
 	renderThumbnail();
 	renderStrategy();
+	renderBrain();
 }
 
 async function runAnalyze() {
@@ -2235,6 +2895,7 @@ async function runAnalyze() {
 	const btn = q('runBtn');
 	if (btn) btn.disabled = true;
 	const parts = [];
+	if (S.settings.useNeuroBrain !== false) parts.push('CORTEX-5 brain model');
 	if (S.sources.script.text) parts.push('script');
 	if (vf && vf.phase === 'ready') parts.push('video file');
 	else if (!IS_STUDIO && S.settings.watchByUrl) parts.push('video by URL');
@@ -2247,7 +2908,7 @@ async function runAnalyze() {
 	}
 	if (transcriptOverride) parts.push('transcript');
 
-	setStatus(`Gemini is analyzing ${parts.join(' + ')}…${parts.includes('video file') || parts.includes('video by URL') ? ' Watching the video can take a few minutes.' : ''}`);
+	setStatus(`Analyzing ${parts.join(' + ')}…${parts.includes('video file') || parts.includes('video by URL') ? ' Watching the video can take a few minutes.' : ''}`);
 
 	const payload = {
 		...m,
@@ -2260,7 +2921,9 @@ async function runAnalyze() {
 		transcriptOverride
 	};
 
-	const res = await runJob('analyze', payload);
+	const res = await runJob('analyze', payload, {
+		onStep: (stepMsg) => setStatus(stepMsg)
+	});
 
 	S.busy = false;
 	setStatus('');
@@ -2280,7 +2943,12 @@ async function runAnalyze() {
 		return;
 	}
 
-	const extras = { grounding: res.grounding || null, usage: res.usage || null, model: res.model || '' };
+	const extras = {
+		grounding: res.grounding || null,
+		usage: res.usage || null,
+		model: res.model || '',
+		neuroBrain: res.neuroBrain || null
+	};
 	// The analysis can take minutes. If the user moved to another video in the
 	// meantime, keep the result in History but never show or apply it here.
 	if (!S.panel || sourceKey() !== runKey) {

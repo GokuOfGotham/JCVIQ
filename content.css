@@ -212,6 +212,24 @@
 	color: var(--jc-accent-ink);
 	letter-spacing: 0.06em;
 }
+#jcviq-panel .jc-brand-neuro {
+	font-size: 10px;
+	font-weight: 600;
+	padding: 1px 6px;
+	border-radius: 999px;
+	background: var(--jc-bg3);
+	color: var(--jc-muted);
+	border: 1px solid var(--jc-line2);
+	letter-spacing: 0.04em;
+}
+#jcviq-panel .jc-brand-neuro.on {
+	background: var(--jc-ok-bg);
+	color: var(--jc-ok);
+	border-color: transparent;
+}
+#jcviq-panel .jc-brand-neuro.off {
+	opacity: 0.5;
+}
 #jcviq-panel .jc-hd-actions { display: flex; gap: 2px; }
 
 #jcviq-panel .jc-iconbtn {
@@ -681,3 +699,14 @@
 	text-overflow: ellipsis;
 }
 #jcviq-panel .jc-src-link:hover { text-decoration: underline; }
+
+/* ---------------- NeuroBrain OS (CORTEX-5) ---------------- */
+
+#jcviq-panel .jc-neuro-box {
+	margin-top: 10px;
+	padding-top: 10px;
+	border-top: 1px solid var(--jc-line);
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}

@@ -21,7 +21,8 @@ The Overview tab has a **Sources** panel. Everything in it feeds the prompt, and
 | **Script** | Paste it, or pick a `.txt` / `.md` / `.srt` / `.vtt` / `.json` file | The authoritative account of what the video says. Works for videos that are still private and have no captions. |
 | **Video file** | Upload the rendered file; it goes to the Gemini Files API and is attached to the request by URI | The model watches the real footage. This is the only path that works for private and still-processing uploads. Up to 2 GB. |
 | **Captions** | Read from YouTube's own transcript panel at analysis time | Timestamped, so chapter suggestions land on real moments. See the caveat below. |
-| **Thumbnail** | The current YouTube thumbnail, or upload your own | Scored by the model's vision. |
+| **Thumbnail** | The current YouTube thumbnail, or upload your own | Scored by the model's vision and CORTEX-5's 0–500ms visual cascade. |
+| **NeuroBrain OS (CORTEX-5)** | Automatic REST call to `http://dell3010:8765` (with failover to `192.168.1.208:8765` and `100.75.229.66:8765`) | Runs a 10-region 0–5s neural timeline simulation, evaluates the 4 Fast Hijack Triggers, rewrites the 5-second hook formula, and retrieves evidence from the 94-page Society for Neuroscience *Brain Facts* PDF (435 chunks + 136 glossary terms) and 5 live Open Neuroscience APIs. |
 
 Scripts and uploaded video references are remembered per video ID, so they survive a page reload and are still there when you come back to the same edit page.
 
@@ -45,7 +46,9 @@ Captions are not available in Studio at all, where there is no transcript panel.
 
 **Thumbnail** — vision scoring for readability, subject visibility, contrast, mobile legibility and clutter, plus three concepts with the exact moment of footage to grab each frame from, and a generator that turns any concept into a real image.
 
-**Strategy** — primary and secondary keywords, the opening hook, content and retention advice, research insights, and a repurposing kit (Shorts ideas, social captions, follow-up video ideas).
+**Strategy** — primary and secondary keywords, the CORTEX-5 5-second hook formula rewrite, the opening hook, content and retention advice, research insights, and a repurposing kit (Shorts ideas, social captions, follow-up video ideas).
+
+**Brain (CORTEX-5)** — full 0–5s neural simulation report (Gatekeeper 0–3s vs. Multiplier 3s+ scores, 4 Fast Neural Hijack Triggers, 4 timeline phases from 0.0s to 5.0s, 10 anatomical brain regions, 6 neurochemicals, Behavioral Advisory Playbook, *Brain Facts* PDF citations, and 5 live Open Neuroscience APIs), plus interactive tools to score any hook (`/api/hook-score`), ask the NeuroBrain Advisor (`/api/advise`), or search the *Brain Facts* knowledge base (`/api/knowledge/search`).
 
 ---
 
