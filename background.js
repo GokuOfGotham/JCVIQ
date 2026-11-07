@@ -1,6 +1,6 @@
 // background.js - JCVIQ service worker.
 //  - Talks to the Gemini API (generateContent + Files API uploads).
-//  - Connects to NeuroBrain OS (CORTEX-5) on dell3010 (with automatic LAN and
+//  - Connects to NeuroBrain OS (CORTEX-5) on dell9010 (with automatic LAN and
 //    Tailscale failover) to ground titles, hooks, thumbnails and strategy in
 //    0-5s computational neuroscience, the Society for Neuroscience 'Brain Facts'
 //    PDF (435 chunks + 136 glossary terms), and 5 live Open Neuroscience APIs.
@@ -22,9 +22,13 @@ try {
 
 const API_BASE = 'https://generativelanguage.googleapis.com';
 
-// NeuroBrain OS (CORTEX-5) default failover endpoints (Tailscale hostname,
-// LAN IP, Tailscale IP, and local loopback).
+// NeuroBrain OS (CORTEX-5) default failover endpoints: the 24/7 host dell9010
+// (Tailscale hostname, LAN IP, Tailscale IP), then the old dell3010 addresses
+// and local loopback.
 const NEUROBRAIN_ENDPOINTS = [
+	'http://dell9010:8765',
+	'http://192.168.1.167:8765',
+	'http://100.111.217.35:8765',
 	'http://dell3010:8765',
 	'http://192.168.1.208:8765',
 	'http://100.75.229.66:8765',
@@ -293,9 +297,9 @@ async function base64ToBytes(b64) {
 }
 
 /* ============================ NeuroBrain OS (CORTEX-5) ============================ */
-// Pluggable network client for NeuroBrain OS (CORTEX-5) running 24/7 on dell3010
-// with automatic failover across http://dell3010:8765, http://192.168.1.208:8765,
-// http://100.75.229.66:8765, and http://127.0.0.1:8765.
+// Pluggable network client for NeuroBrain OS (CORTEX-5) running 24/7 on dell9010
+// with automatic failover across http://dell9010:8765, http://192.168.1.167:8765,
+// http://100.111.217.35:8765, and http://127.0.0.1:8765.
 
 function getNeuroEndpoints(customUrl) {
 	const list = [];
@@ -450,7 +454,7 @@ async function runNeuroHookScore(payload, setStep) {
 		}
 	});
 	if (!res || !res.data) {
-		return { error: 'Could not reach NeuroBrain OS (CORTEX-5) on dell3010:8765 (or failover IPs). Check that neurobrain.service is running.' };
+		return { error: 'Could not reach NeuroBrain OS (CORTEX-5) on dell9010:8765 (or failover IPs). Check that the NeuroBrainOS task is running on dell9010.' };
 	}
 	if (res.data.error) return { error: String(res.data.error) };
 	return { success: true, report: res.data, endpoint: res.endpoint };
@@ -471,7 +475,7 @@ async function runNeuroAdvise(payload, setStep) {
 		}
 	});
 	if (!res || !res.data) {
-		return { error: 'Could not reach NeuroBrain OS (CORTEX-5) on dell3010:8765 (or failover IPs). Check that neurobrain.service is running.' };
+		return { error: 'Could not reach NeuroBrain OS (CORTEX-5) on dell9010:8765 (or failover IPs). Check that the NeuroBrainOS task is running on dell9010.' };
 	}
 	if (res.data.error) return { error: String(res.data.error) };
 	return { success: true, advice: res.data, endpoint: res.endpoint };
@@ -486,7 +490,7 @@ async function runNeuroKnowledgeSearch(query, topK = 6) {
 		body: { query: q, top_k: Number(topK) || 6 }
 	});
 	if (!res || !res.data) {
-		return { error: 'Could not reach NeuroBrain OS (CORTEX-5) on dell3010:8765.' };
+		return { error: 'Could not reach NeuroBrain OS (CORTEX-5) on dell9010:8765.' };
 	}
 	return { success: true, results: res.data, endpoint: res.endpoint };
 }
@@ -994,12 +998,12 @@ async function analyze(p, setStep) {
 		useSearch: settings.useSearch
 	};
 
-	// Consult NeuroBrain OS (CORTEX-5) on dell3010 (or failover IPs) first so
+	// Consult NeuroBrain OS (CORTEX-5) on dell9010 (or failover IPs) first so
 	// its 0-5s neural simulation, 4 hijack triggers, 5s hook rewrite, and
 	// Society for Neuroscience 'Brain Facts' citations ground the Gemini prompt.
 	let neuroBrain = null;
 	if (settings.useNeuroBrain !== false) {
-		if (setStep) setStep('Consulting NeuroBrain OS (CORTEX-5) 0–5s brain model on dell3010…');
+		if (setStep) setStep('Consulting NeuroBrain OS (CORTEX-5) 0–5s brain model on dell9010…');
 		try {
 			neuroBrain = await fetchNeuroBrainForVideo(base, thumbnail);
 		} catch (e) {

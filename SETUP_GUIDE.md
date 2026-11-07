@@ -56,7 +56,7 @@ Then click **Analyze video**. With a video file attached this can take a few min
 
 **Strategy** covers keywords, the CORTEX-5 5-second hook formula rewrite, the opening hook, retention advice, research insights and repurposing.
 
-**Brain** shows the full NeuroBrain OS (CORTEX-5) 0–5s neural timeline simulation from `dell3010:8765` (Gatekeeper 0–3s vs. Multiplier 3s+ scores, 4 Fast Neural Hijack Triggers, 10 anatomical brain regions, 6 neurochemicals, Behavioral Advisory Playbook, and Society for Neuroscience *Brain Facts* citations), plus interactive labs to score any hook (`/api/hook-score`), ask the Brain Advisor (`/api/advise`), or search the *Brain Facts* PDF (`/api/knowledge/search`).
+**Brain** shows the full NeuroBrain OS (CORTEX-5) 0–5s neural timeline simulation from `dell9010:8765` (Gatekeeper 0–3s vs. Multiplier 3s+ scores, 4 Fast Neural Hijack Triggers, 10 anatomical brain regions, 6 neurochemicals, Behavioral Advisory Playbook, and Society for Neuroscience *Brain Facts* citations), plus interactive labs to score any hook (`/api/hook-score`), ask the Brain Advisor (`/api/advise`), or search the *Brain Facts* PDF (`/api/knowledge/search`).
 
 ---
 

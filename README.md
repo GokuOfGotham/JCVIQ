@@ -22,7 +22,7 @@ The Overview tab has a **Sources** panel. Everything in it feeds the prompt, and
 | **Video file** | Upload the rendered file; it goes to the Gemini Files API and is attached to the request by URI | The model watches the real footage. This is the only path that works for private and still-processing uploads. Up to 2 GB. |
 | **Captions** | Read from YouTube's own transcript panel at analysis time | Timestamped, so chapter suggestions land on real moments. See the caveat below. |
 | **Thumbnail** | The current YouTube thumbnail, or upload your own | Scored by the model's vision and CORTEX-5's 0–500ms visual cascade. |
-| **NeuroBrain OS (CORTEX-5)** | Automatic REST call to `http://dell3010:8765` (with failover to `192.168.1.208:8765` and `100.75.229.66:8765`) | Runs a 10-region 0–5s neural timeline simulation, evaluates the 4 Fast Hijack Triggers, rewrites the 5-second hook formula, and retrieves evidence from the 94-page Society for Neuroscience *Brain Facts* PDF (435 chunks + 136 glossary terms) and 5 live Open Neuroscience APIs. |
+| **NeuroBrain OS (CORTEX-5)** | Automatic REST call to `http://dell9010:8765` (with failover to `192.168.1.167:8765` and `100.111.217.35:8765`) | Runs a 10-region 0–5s neural timeline simulation, evaluates the 4 Fast Hijack Triggers, rewrites the 5-second hook formula, and retrieves evidence from the 94-page Society for Neuroscience *Brain Facts* PDF (435 chunks + 136 glossary terms) and 5 live Open Neuroscience APIs. |
 
 Scripts and uploaded video references are remembered per video ID, so they survive a page reload and are still there when you come back to the same edit page.
 

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "JCVIQ - YouTube AI Optimizer",
-  "version": "2.2",
+  "version": "2.3",
   "description": "AI YouTube optimizer powered by Gemini and NeuroBrain OS (CORTEX-5): analyzes your script, video and thumbnail with 0-5s neuroscience to generate high-CTR titles, hooks, descriptions, tags, chapters and thumbnails.",
   "permissions": [
     "storage"
@@ -10,6 +10,9 @@
     "https://*.youtube.com/*",
     "https://i.ytimg.com/*",
     "https://generativelanguage.googleapis.com/*",
+    "http://dell9010:8765/*",
+    "http://192.168.1.167:8765/*",
+    "http://100.111.217.35:8765/*",
     "http://dell3010:8765/*",
     "http://192.168.1.208:8765/*",
     "http://100.75.229.66:8765/*",
