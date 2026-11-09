@@ -934,7 +934,7 @@ Guidelines:
 - Description: For long-form: a full, ready-to-paste description (3-6 short paragraphs), primary keyword in the first sentence. For Shorts: ONLY 1-2 sentences maximum. DO NOT include hashtags in this text; the extension appends them from the hashtags array. DO NOT include chapters in this text; they come from the chapters array.
 - Hashtags: 3-5 relevant hashtags (include #).
 - Tags: 12-15 SEO tags/keywords (no #), broad + long-tail, MOST IMPORTANT FIRST — the extension drops tags from the end to fit YouTube's budget. HARD LIMIT: the combined length of all tags joined by commas MUST stay under 500 characters. Prefer concise tags; drop the weakest rather than exceed 500.
-- Thumbnail concepts: 3 distinct concepts, each a punchy 2-4 word ALL-CAPS text overlay + visual idea engineered around CORTEX-5's 4 Fast Hijack Triggers: (1) 170ms Fusiform Face Area eye-contact/micro-expression lock, (2) Prediction Error visual anomaly, (3) Insular Cortex visceral sensory cue, and (4) Thalamus->Amygdala Low-Road contrast & looming scale. Calm, static, "beautiful" shots are a CTR killer. In "moment", state exactly which moment of the footage to grab the frame from (timestamp if you can) and which neural trigger it hits.
+- Thumbnail concepts: 3 distinct concepts, each a punchy 2-4 word ALL-CAPS text overlay + visual idea engineered around CORTEX-5's 4 Fast Hijack Triggers: (1) 170ms Fusiform Face Area eye-contact/micro-expression lock, (2) Prediction Error visual anomaly, (3) Insular Cortex visceral sensory cue, and (4) Thalamus->Amygdala Low-Road contrast & looming scale. Calm, static, "beautiful" shots are a CTR killer. THEME FIDELITY: every concept must visibly express the title's core themes, and any named person, era, work or eponymous adjective in the title (e.g. "Machiavellian" -> Machiavelli, The Prince, Renaissance court intrigue) must appear as concrete iconography in the "idea" — never water it down to a generic adjective. In "moment", state exactly which moment of the footage to grab the frame from (timestamp if you can) and which neural trigger it hits.
 - Chapters: for videos over 60 seconds, 4-8 entries; for Shorts or anything under 60 seconds, an EMPTY array. The FIRST MUST be "0:00", timestamps ascending, at least 10 seconds apart, and every one BELOW the video length stated in <video_data>. Base them on the transcript/script's actual sections — never invent timestamps.
 - Pinned comment: one engaging comment that asks a self-referential question (activating the viewer's Default Mode Network to drive replies).
 - Playlists: 2-4 playlist names.
@@ -1242,10 +1242,59 @@ COMPOSITION RULES:
 - Text overlay should be large, short and centred in the upper-middle, never near an edge.`
 };
 
+const THEME_STOPWORDS = new Set(('a an the and or but nor of to in on at by for with from into onto over under about as is are was were be been being '
+	+ 'this that these those it its your you our my his her their how why what when where who which vs versus guide part episode ep '
+	+ 'official video full new best top ultimate complete').split(' '));
+
+// Eponymous adjectives and -isms (Machiavellian, Orwellian, Kafkaesque,
+// Darwinian, Stoicism...) carry a whole visual world in one word. The image
+// model tends to read them as a mere intensifier unless they are called out.
+const SIGNATURE_RE = /^[A-Z][a-z]{2,}(?:ian|ean|esque|ism)$/;
+
+function extractThemeTerms(texts) {
+	const terms = [];
+	const signature = [];
+	const seen = new Set();
+	for (const text of texts) {
+		if (!text) continue;
+		const words = String(text).match(/[A-Za-z][A-Za-z'’-]*[A-Za-z]/g) || [];
+		for (const raw of words) {
+			const word = raw.replace(/['’]s$/i, '');
+			const key = word.toLowerCase();
+			if (key.length < 4 || THEME_STOPWORDS.has(key) || seen.has(key)) continue;
+			seen.add(key);
+			terms.push(word);
+			if (SIGNATURE_RE.test(word)) signature.push(word);
+		}
+	}
+	return { terms: terms.slice(0, 14), signature };
+}
+
 function buildThumbnailPrompt(p, aspect) {
 	const lines = [];
-	lines.push('Generate a single YouTube thumbnail image. Photographic, high production value, engineered for 0–500ms neurological capture and maximum click-through rate.');
+	lines.push('Generate a single YouTube thumbnail image. High production value, engineered for 0–500ms neurological capture and maximum click-through rate.');
 	lines.push('');
+
+	// What the image is ABOUT goes first and is binding. The visual-hijack
+	// rules below are about HOW to render it, never a reason to drop a theme.
+	const titles = [p.originalTitle, p.videoTitle]
+		.map((t) => String(t || '').trim())
+		.filter((t, i, arr) => t && arr.indexOf(t) === i);
+	const { terms, signature } = extractThemeTerms([...titles, p.idea, p.extra, p.keyword]);
+	lines.push('SUBJECT AND THEME (binding — this is what the image is about):');
+	titles.forEach((t, i) => lines.push(`${i === 0 ? 'VIDEO TITLE' : 'ALTERNATE TITLE'}: ${t.slice(0, 200)}`));
+	if (p.keyword) lines.push(`TOPIC: ${String(p.keyword).slice(0, 120)}`);
+	if (p.niche) lines.push(`CHANNEL NICHE: ${String(p.niche).slice(0, 200)}`);
+	if (terms.length) {
+		lines.push(`KEY THEMES: ${terms.join(', ')}`);
+		lines.push('Every key theme must be readable in the image through concrete, specific visual symbols — not just a generic mood. A viewer who sees only the image should be able to guess the title\'s core idea.');
+	}
+	if (signature.length) {
+		lines.push(`SIGNATURE REFERENCES (must not be ignored): ${signature.join(', ')}`);
+		lines.push('Each of these names a specific person, era, work or school of thought. Translate it into that reference\'s own recognisable iconography and give it a prominent place in the composition — e.g. "Machiavellian" means Niccolò Machiavelli and Renaissance Florence: a period portrait or marble bust of Machiavelli, a copy of "The Prince", Renaissance oil-painting light, chess-like schemes, a dagger behind the back, a velvet-and-gold court palette. Do NOT reduce it to a generic word like "ruthless" or "strategic". Blend the reference with the modern setting from the title when the title has one (e.g. Renaissance intrigue inside a modern boardroom).');
+	}
+	lines.push('');
+
 	lines.push(ASPECT_RULES[aspect] || ASPECT_RULES['16:9']);
 	lines.push('');
 	lines.push('NEUROBRAIN CORTEX-5 VISUAL HIJACK RULES:');
@@ -1254,10 +1303,7 @@ function buildThumbnailPrompt(p, aspect) {
 	lines.push('- 300ms P300 & Dopamine Prediction Error: Capture the peak millisecond of tension or anomaly mid-action rather than a static, calm pose.');
 	lines.push('');
 
-	if (p.videoTitle) lines.push(`VIDEO TITLE: ${String(p.videoTitle).slice(0, 200)}`);
-	if (p.keyword) lines.push(`TOPIC: ${String(p.keyword).slice(0, 120)}`);
-	if (p.niche) lines.push(`CHANNEL NICHE: ${String(p.niche).slice(0, 200)}`);
-	if (p.idea) lines.push(`\nVISUAL CONCEPT (follow this closely): ${String(p.idea).slice(0, 1200)}`);
+	if (p.idea) lines.push(`VISUAL CONCEPT (follow this closely, keeping every key theme above): ${String(p.idea).slice(0, 1200)}`);
 	if (p.neuroPrompt) lines.push(`\nNEUROBRAIN CORTEX-5 VISUAL DIRECTION: ${String(p.neuroPrompt).slice(0, 1000)}`);
 	if (p.moment) lines.push(`REFERENCE MOMENT FROM THE FOOTAGE: ${String(p.moment).slice(0, 300)}`);
 
@@ -1269,12 +1315,12 @@ function buildThumbnailPrompt(p, aspect) {
 	}
 
 	if (p.reference) {
-		lines.push('\nA still frame from the actual video is attached. Match its subject, setting, lighting and colour so the thumbnail is honest about what the video contains. Improve the framing, contrast and drama — do not invent a different subject.');
+		lines.push('\nA still frame from the actual video is attached. Use it to stay honest about what the video contains: reuse its real subject, setting, lighting and colour where they fit. If the frame is generic (a talking head, screen recording, slide or b-roll) it must NOT override the key themes and signature references above — use it only for palette and lighting, and build the scene around the title\'s theme. Improve framing, contrast and drama.');
 	}
 
-	lines.push('\nSTYLE: bold saturated colour, strong directional light, high micro-contrast between the subject and the background, shallow depth of field. Cinematic, not cartoonish, unless the concept calls for illustration.');
-	lines.push('AVOID: cluttered composition, small distant subjects, flat even lighting, muddy dark shadows, collage layouts, borders or frames, stock-photo blandness, gibberish text.');
-	lines.push('ACCURACY: do not depict real identifiable people unless the reference frame shows them, and never fabricate an event the video does not contain.');
+	lines.push('\nSTYLE: bold saturated colour, strong directional light, high micro-contrast between the subject and the background, shallow depth of field. Cinematic and photographic by default; use a painterly, engraved or sculptural treatment where a historical or literary reference calls for it.');
+	lines.push('AVOID: cluttered composition, small distant subjects, flat even lighting, muddy dark shadows, collage layouts, borders or frames, stock-photo blandness, generic office stock imagery that ignores the title\'s theme, gibberish text.');
+	lines.push('ACCURACY: do not show a photoreal likeness of a living real person unless the reference frame shows them, and never fabricate an event the video does not contain. Historical figures and public-domain cultural references named or implied by the title (e.g. Machiavelli, Sun Tzu, Napoleon, Marcus Aurelius) ARE allowed and encouraged, shown in period style — portrait, bust, statue or engraving.');
 
 	if (p.extra && String(p.extra).trim()) {
 		lines.push(`\nADDITIONAL DIRECTION FROM THE CREATOR: ${String(p.extra).trim().slice(0, 600)}`);

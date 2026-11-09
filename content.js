@@ -1881,7 +1881,10 @@ async function generateThumbnailFor(key, concept, btn) {
 		moment: concept.moment,
 		neuroPrompt,
 		extra: key === 'custom' ? '' : (S.customPrompt.extra || ''),
-		videoTitle: (S.result && S.result.titles && S.result.titles.length ? S.result.titles[0].title : (S.meta && S.meta.title)) || '',
+		// The creator's own title is the source of truth for the theme; the
+		// top AI title rewrite can drop words like "Machiavellian".
+		originalTitle: (S.meta && S.meta.title) || '',
+		videoTitle: (S.result && S.result.titles && S.result.titles.length ? S.result.titles[0].title : '') || '',
 		keyword: currentKeyword(),
 		niche: profile.niche || '',
 		reference
