@@ -1,23 +1,29 @@
 {
   "manifest_version": 3,
   "name": "JCVIQ - YouTube AI Optimizer",
-  "version": "1.1",
-  "description": "AI-powered YouTube optimization with title, description, tags, and thumbnail analysis using Google Gemini.",
+  "version": "2.3",
+  "description": "AI YouTube optimizer powered by Gemini and NeuroBrain OS (CORTEX-5): analyzes your script, video and thumbnail with 0-5s neuroscience to generate high-CTR titles, hooks, descriptions, tags, chapters and thumbnails.",
   "permissions": [
-    "activeTab",
-    "scripting",
     "storage"
   ],
   "host_permissions": [
     "https://*.youtube.com/*",
     "https://i.ytimg.com/*",
-    "https://generativelanguage.googleapis.com/*"
+    "https://generativelanguage.googleapis.com/*",
+    "http://dell9010:8765/*",
+    "http://192.168.1.167:8765/*",
+    "http://100.111.217.35:8765/*",
+    "http://dell3010:8765/*",
+    "http://192.168.1.208:8765/*",
+    "http://100.75.229.66:8765/*",
+    "http://127.0.0.1:8765/*",
+    "http://localhost:8765/*"
   ],
   "background": {
     "service_worker": "background.js"
   },
   "action": {
-    "default_title": "JCVIQ - YouTube Optimizer",
+    "default_title": "JCVIQ - show or hide the panel on YouTube or Studio",
     "default_icon": {
       "16": "images/icon16.png",
       "32": "images/icon32.png",
@@ -27,16 +33,28 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://*.youtube.com/*"],
-      "js": ["content.js"],
-      "css": ["content.css"],
+      "matches": [
+        "https://www.youtube.com/*",
+        "https://studio.youtube.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "css": [
+        "content.css"
+      ],
       "run_at": "document_idle"
     }
   ],
   "web_accessible_resources": [
     {
-      "resources": ["images/*"],
-      "matches": ["https://*.youtube.com/*"]
+      "resources": [
+        "images/icon48.png"
+      ],
+      "matches": [
+        "https://www.youtube.com/*",
+        "https://studio.youtube.com/*"
+      ]
     }
   ],
   "icons": {
