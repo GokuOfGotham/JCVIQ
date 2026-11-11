@@ -50,6 +50,8 @@ Captions are not available in Studio at all, where there is no transcript panel.
 
 **Brain (CORTEX-5)** — full 0–5s neural simulation report (Gatekeeper 0–3s vs. Multiplier 3s+ scores, 4 Fast Neural Hijack Triggers, 4 timeline phases from 0.0s to 5.0s, 10 anatomical brain regions, 6 neurochemicals, Behavioral Advisory Playbook, *Brain Facts* PDF citations, and 5 live Open Neuroscience APIs), plus interactive tools to score any hook (`/api/hook-score`), ask the NeuroBrain Advisor (`/api/advise`), or search the *Brain Facts* knowledge base (`/api/knowledge/search`).
 
+The Brain tab also has **Search the Strategists** (Sun Tzu, La Rochefoucauld, Schopenhauer, Gracián, Chanakya and Machiavelli, each hit cited and linked to its public-domain source) and **Scripture & Theology** (exact Berean Standard Bible / KJV text by words or reference, a passage study with cross-references, commentary and Greek/Hebrew key words, and CC0 artwork links). The Advisor gains *Machiavelli Counsel* and *Theology & Scripture* domains and lists the passages each answer was grounded in. All of it comes from the NeuroBrain server; no extra keys.
+
 ---
 
 ## Thumbnail generation

@@ -19,6 +19,7 @@ try {
 } catch (e) {
 	/* config.js is optional */
 }
+importScripts('apimass.js');
 
 const API_BASE = 'https://generativelanguage.googleapis.com';
 
@@ -88,6 +89,10 @@ const HANDLERS = {
 	neuroHookScore: (req) => startJob((setStep) => runNeuroHookScore(req.payload || {}, setStep)),
 	neuroKnowledgeSearch: (req) => runNeuroKnowledgeSearch(req.query || '', req.topK || 6),
 	neuroExternalSearch: (req) => runNeuroExternalSearch(req.query || '', req.regionId || null, req.limit || 4),
+	neuroStrategistsSearch: (req) => runNeuroStrategistsSearch(req.query || '', req.author || '', req.topK || 5),
+	neuroBibleSearch: (req) => runNeuroBibleSearch(req.query || '', req.translation || 'BSB', req.topK || 5),
+	neuroBibleStudy: (req) => runNeuroBibleStudy(req.reference || '', req.commentary || 'matthew-henry', req.translation || 'BSB'),
+	neuroChristianArt: (req) => runNeuroChristianArt(req.query || '', req.limit || 6),
 	neuroHealth: (req) => checkNeuroBrainHealth(req && req.customUrl),
 	jobStatus: (req) => jobStatus(req.jobId),
 	getOptions: () => ({
@@ -102,7 +107,10 @@ const HANDLERS = {
 	fileDelete: (req) => fileDelete(req.name),
 	startMassUpdate: (req) => startMassUpdate(req.vids || []),
 	massUpdateNext: (req, sender) => massUpdateNext(sender),
-	cancelMassUpdate: () => cancelMassUpdate()
+	cancelMassUpdate: () => cancelMassUpdate(),
+	startApiMassUpdate: (req) => startApiMassUpdate(req.vids || []),
+	cancelApiMassUpdate: () => cancelApiMassUpdate(),
+	restoreApiMassBackup: () => restoreApiMassBackup()
 };
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
@@ -492,6 +500,71 @@ async function runNeuroKnowledgeSearch(query, topK = 6) {
 	if (!res || !res.data) {
 		return { error: 'Could not reach NeuroBrain OS (CORTEX-5) on dell9010:8765.' };
 	}
+	return { success: true, results: res.data, endpoint: res.endpoint };
+}
+
+/* ---- Scripture & theology (public-domain Bible text served by NeuroBrain) ---- */
+
+const NEURO_THEOLOGY_DOWN = 'Could not reach the NeuroBrain Scripture service. The server may be older than the theology update.';
+
+// Words and/or a reference ("Romans 8:28"): references come back verbatim,
+// keyword hits from the Berean Standard Bible, plus matching creed articles.
+async function runNeuroBibleSearch(query, translation = 'BSB', topK = 5) {
+	const q = String(query || '').trim();
+	if (!q) return { error: 'Enter words to find or a reference such as John 3:16.' };
+	const res = await neuroRequest('/api/theology/search', {
+		method: 'POST',
+		timeoutMs: 20000,
+		body: { query: q, top_k: Number(topK) || 5, translation: translation === 'KJV' ? 'KJV' : 'BSB', include_creeds: true }
+	});
+	if (!res || !res.data) return { error: NEURO_THEOLOGY_DOWN };
+	if (res.data.error) return { error: String(res.data.error) };
+	return { success: true, results: res.data, endpoint: res.endpoint };
+}
+
+// One passage in depth: text, KJV, cross-references, commentary, key Greek/Hebrew words.
+async function runNeuroBibleStudy(reference, commentary = 'matthew-henry', translation = 'BSB') {
+	const ref = String(reference || '').trim();
+	if (!ref) return { error: 'Enter a reference such as Romans 8:28.' };
+	const path = `/api/theology/study?ref=${encodeURIComponent(ref)}&commentary=${encodeURIComponent(commentary)}&translation=${encodeURIComponent(translation)}`;
+	const res = await neuroRequest(path, { method: 'GET', timeoutMs: 45000 });
+	if (!res || !res.data) {
+		return { error: `Could not study "${ref}". Check it is a Bible reference like "John 3:16" and that NeuroBrain is up to date.` };
+	}
+	if (res.data.error) return { error: String(res.data.error) };
+	return { success: true, study: res.data, endpoint: res.endpoint };
+}
+
+// CC0 public-domain artworks (Art Institute of Chicago) for B-roll and thumbnails.
+async function runNeuroChristianArt(query, limit = 6) {
+	const q = String(query || '').trim();
+	if (!q) return { error: 'Enter a subject such as Crucifixion or Last Supper.' };
+	const res = await neuroRequest(`/api/theology/art?q=${encodeURIComponent(q)}&limit=${Number(limit) || 6}`, { method: 'GET', timeoutMs: 25000 });
+	if (!res || !res.data) return { error: NEURO_THEOLOGY_DOWN };
+	if (res.data.error) return { error: String(res.data.error) };
+	return { success: true, art: res.data, endpoint: res.endpoint };
+}
+
+// Searches the public-domain strategists corpus (Sun Tzu, La Rochefoucauld,
+// Schopenhauer, Gracián, Kautilya/Chanakya) plus Machiavelli's two best
+// English passages. Every hit carries its author, citation and source URL.
+async function runNeuroStrategistsSearch(query, author = '', topK = 5) {
+	const q = String(query || '').trim();
+	if (!q) return { error: 'Enter a search query for the strategists.' };
+	const res = await neuroRequest('/api/strategists/search', {
+		method: 'POST',
+		timeoutMs: 20000,
+		body: {
+			query: q,
+			top_k: Number(topK) || 5,
+			authors: author ? [String(author)] : null,
+			include_machiavelli: !author
+		}
+	});
+	if (!res || !res.data) {
+		return { error: 'Could not reach the NeuroBrain strategists search. The server may be older than the strategists update.' };
+	}
+	if (res.data.error) return { error: String(res.data.error) };
 	return { success: true, results: res.data, endpoint: res.endpoint };
 }
 
@@ -1002,7 +1075,8 @@ async function analyze(p, setStep) {
 	// its 0-5s neural simulation, 4 hijack triggers, 5s hook rewrite, and
 	// Society for Neuroscience 'Brain Facts' citations ground the Gemini prompt.
 	let neuroBrain = null;
-	if (settings.useNeuroBrain !== false) {
+	// A mass update always consults NeuroBrain, whatever the panel toggle says.
+	if (settings.useNeuroBrain !== false || p.massUpdate) {
 		if (setStep) setStep('Consulting NeuroBrain OS (CORTEX-5) 0–5s brain model on dell9010…');
 		try {
 			neuroBrain = await fetchNeuroBrainForVideo(base, thumbnail);
@@ -1507,12 +1581,22 @@ function repairTruncatedJson(str) {
 
 /* ============================ Mass update queue ============================ */
 
-function openEditTab(videoId) {
-	return new Promise((resolve) => {
-		chrome.tabs.create({ url: `https://studio.youtube.com/video/${videoId}/edit`, active: false }, (tab) => {
-			chrome.storage.local.set({ massUpdateTabId: tab && tab.id }, () => resolve());
-		});
-	});
+// One worker tab is reused for the whole run: it is navigated to each video
+// in turn instead of opening and closing a tab per video.
+async function openEditTab(videoId) {
+	const url = `https://studio.youtube.com/video/${videoId}/edit`;
+	const { massUpdateTabId } = await chrome.storage.local.get('massUpdateTabId');
+	if (massUpdateTabId) {
+		try {
+			const tab = await chrome.tabs.get(massUpdateTabId);
+			if (tab && /^https:\/\/studio\.youtube\.com\//.test(tab.url || tab.pendingUrl || '')) {
+				await chrome.tabs.update(tab.id, { url });
+				return;
+			}
+		} catch (e) { /* tab was closed; open a new one */ }
+	}
+	const tab = await chrome.tabs.create({ url, active: false });
+	await chrome.storage.local.set({ massUpdateTabId: tab && tab.id });
 }
 
 async function startMassUpdate(vids) {
@@ -1524,14 +1608,15 @@ async function startMassUpdate(vids) {
 }
 
 async function massUpdateNext(sender) {
-	const { massUpdateQueue = [] } = await chrome.storage.local.get('massUpdateQueue');
-	if (sender && sender.tab && sender.tab.id) {
-		chrome.tabs.remove(sender.tab.id).catch(() => {});
-	}
+	const { massUpdateQueue = [], massUpdateTabId } = await chrome.storage.local.get(['massUpdateQueue', 'massUpdateTabId']);
 	massUpdateQueue.shift();
 	await chrome.storage.local.set({ massUpdateQueue });
 	if (massUpdateQueue.length) await openEditTab(massUpdateQueue[0]);
-	else await chrome.storage.local.remove(['massUpdateTabId', 'massUpdateStarted']);
+	else {
+		await chrome.storage.local.remove(['massUpdateTabId', 'massUpdateStarted']);
+		const id = (sender && sender.tab && sender.tab.id) || massUpdateTabId;
+		if (id) chrome.tabs.remove(id).catch(() => {});
+	}
 	return { ok: true, remaining: massUpdateQueue.length };
 }
 

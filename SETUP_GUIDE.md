@@ -109,3 +109,12 @@ If you want every analysis to write into the form automatically, turn on **Auto-
 ## Optional: local key fallback
 
 `background.js` reads the key from `chrome.storage.local` first, then falls back to `config.js` if it exists. To use it, copy `config.example.js` to `config.js` and paste your key there. `config.js` is gitignored. Most people should just use the Settings panel and skip this.
+
+## Mass update with the YouTube API (no tabs)
+
+1. In Google Cloud Console, create a project, enable **YouTube Data API v3**, and configure the OAuth consent screen (add yourself as a test user).
+2. Create an OAuth client ID of type **Web application**. Under Authorized redirect URIs add the `https://<extension-id>.chromiumapp.org/` address shown in JCVIQ Settings > "Mass update via YouTube API".
+3. Paste the client ID into that Settings field and save.
+4. On the Studio videos page, run Mass optimize. The first run asks you to sign in to Google; after that it runs in the background, using the local NeuroBrain server and Gemini, and writes each video through the API.
+
+Each video costs about 51 of the default 10,000 daily quota units (roughly 190 videos a day). The run stops cleanly when the quota is hit. Original titles, descriptions and tags are backed up, and "Restore originals" puts them back.

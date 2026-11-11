@@ -4,9 +4,12 @@
   "version": "2.3",
   "description": "AI YouTube optimizer powered by Gemini and NeuroBrain OS (CORTEX-5): analyzes your script, video and thumbnail with 0-5s neuroscience to generate high-CTR titles, hooks, descriptions, tags, chapters and thumbnails.",
   "permissions": [
-    "storage"
+    "storage",
+    "identity"
   ],
   "host_permissions": [
+    "https://www.googleapis.com/*",
+    "https://accounts.google.com/*",
     "https://*.youtube.com/*",
     "https://i.ytimg.com/*",
     "https://generativelanguage.googleapis.com/*",

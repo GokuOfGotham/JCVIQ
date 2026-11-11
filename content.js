@@ -66,7 +66,9 @@ const S = {
 	neuroHealth: { connected: false, endpoint: null, health: null, enabled: true },
 	neuroHookLab: { hook: '', useThumb: true, busy: false, report: null },
 	neuroAdvisorLab: { domain: 'video', prompt: '', busy: false, advice: null },
-	neuroKbLab: { query: '', busy: false, results: null }
+	neuroKbLab: { query: '', busy: false, results: null },
+	neuroStratLab: { query: '', author: '', busy: false, results: null },
+	neuroBibleLab: { query: '', translation: 'BSB', commentary: 'matthew-henry', busy: '', results: null, study: null, art: null }
 };
 
 /* ============================ Small helpers ============================ */
@@ -1509,11 +1511,14 @@ function neuroOverviewCard(nb) {
 
 function massCard() {
 	const c = card('Mass optimize', null);
-	const count = collectStudioVideoIds().length;
-	c.append(paragraph(`${count} video${count === 1 ? '' : 's'} found on this page. Each one opens in a background tab, gets analyzed, has its title, description and tags replaced with the top suggestions, and is saved.`));
+	const count = targetVideoIds().ids.length;
+	const info = paragraph('');
+	info.dataset.jc = 'massInfo';
+	c.append(info);
 	c.append(el('div', 'jc-hint', 'Uploaded video files and scripts are matched by video ID, so add them on each video\'s edit page first if you want grounded results.'));
 	const btn = button(`Mass optimize ${count} videos`, { primary: true, icon: 'bolt', disabled: !count });
 	btn.dataset.jc = 'massBtn';
+	setTimeout(updateMassSelection, 0);
 	const confirm = el('div', 'jc-confirm');
 	confirm.hidden = true;
 	confirm.append(svg('warning'), el('div', null, 'This overwrites metadata on every video listed and saves it. Continue?'));
@@ -1532,10 +1537,44 @@ function massCard() {
 	});
 	cancelRun.dataset.jc = 'massCancel';
 	cancelRun.hidden = true;
-	c.append(btn, cancelRun, confirm);
+	const apiStatus = el('div', 'jc-hint');
+	apiStatus.dataset.jc = 'massStatus';
+	const restore = button('Restore originals', {
+		small: true,
+		onClick: async () => {
+			const r = await send({ action: 'restoreApiMassBackup' });
+			toast(r.error || `Restored ${r.restored} video${r.restored === 1 ? '' : 's'}${r.remaining ? `, ${r.remaining} left (quota)` : ''}.`, r.error ? 'err' : 'ok', 6000);
+		}
+	});
+	c.append(btn, cancelRun, apiStatus, restore, confirm);
+	storageGet('apiMassState').then(({ apiMassState }) => { if (apiMassState) reflectApiMass(apiMassState); });
 	// Reflect a run that is already going, e.g. after navigating back here.
 	storageGet('massUpdateQueue').then(({ massUpdateQueue = [] }) => reflectMassQueue(massUpdateQueue.length, true));
 	return c;
+}
+
+function reflectApiMass(st) {
+	const btn = q('massBtn');
+	const cancel = q('massCancel');
+	const status = q('massStatus');
+	if (!btn) return;
+	const label = btn.querySelector('span:last-child');
+	if (st.running) {
+		btn.disabled = true;
+		if (label) label.textContent = `Updating ${Math.min(st.total, st.done + st.failed + 1)} of ${st.total} via API…`;
+		if (status) status.textContent = (st.current ? `Now: ${st.current}. ` : '') + (st.step || '');
+		if (cancel) {
+			cancel.hidden = false;
+			cancel.onclick = async () => { await send({ action: 'cancelApiMassUpdate' }); };
+		}
+	} else {
+		btn.disabled = false;
+		if (cancel) cancel.hidden = true;
+		if (st.finished) {
+			if (label) label.textContent = 'Mass update finished';
+			if (status) status.textContent = `${st.message || ''}${st.errors && st.errors.length ? ' Problems: ' + st.errors.join('; ') : ''}`;
+		}
+	}
 }
 
 function reflectMassQueue(remaining, initial) {
@@ -2240,6 +2279,12 @@ function renderBrain() {
 
 	// 5. Society for Neuroscience 'Brain Facts' PDF Search (/api/knowledge/search)
 	v.append(buildNeuroKbLabCard());
+
+	// 6. Classic strategists: Sun Tzu, La Rochefoucauld, Schopenhauer, Gracián, Chanakya (/api/strategists/search)
+	v.append(buildNeuroStrategistsLabCard());
+
+	// 7. Scripture & theology: exact Bible text, study notes, public-domain art (/api/theology/*)
+	v.append(buildNeuroBibleLabCard());
 }
 
 function renderNeuroReportCards(container, nb) {
@@ -2493,7 +2538,9 @@ function buildNeuroAdvisorLabCard() {
 		['thumbnail', 'Thumbnail & Visual Salience'],
 		['psychology', 'Human Psychology & Behavior'],
 		['sales', 'Persuasion & Conversion'],
-		['general', 'General Neuroscience']
+		['general', 'General Neuroscience'],
+		['machiavelli', 'Machiavelli Counsel (strategy)'],
+		['theology', 'Theology & Scripture']
 	].forEach(([val, lbl]) => {
 		const o = el('option', null, lbl);
 		o.value = val;
@@ -2557,6 +2604,230 @@ function buildNeuroAdvisorLabCard() {
 		if (a.exact_words_or_script_to_use) {
 			box.append(el('div', 'jc-label', 'Exact script / phrasing to use'));
 			box.append(el('pre', 'jc-pre', a.exact_words_or_script_to_use));
+		}
+		// Machiavelli counsel names the doctrine it ruled by.
+		if (a.maxim && a.maxim.en_quote) {
+			box.append(el('div', 'jc-label', 'Governing maxim'));
+			box.append(strategistRow('M', a.maxim.citation || a.maxim.name || 'Machiavelli', a.maxim.en_quote, null));
+		}
+		// Exact Bible text and creed articles the answer was grounded in.
+		const scripture = ((a.pdf_evidence && a.pdf_evidence.scripture) || []).filter((s) => s && s.citation && s.excerpt);
+		if (scripture.length) {
+			box.append(el('div', 'jc-label', 'Scripture quoted'));
+			scripture.slice(0, 5).forEach((s) => {
+				box.append(strategistRow(s.kind === 'creed' ? '¶' : '✝', s.citation, s.excerpt, null));
+			});
+		}
+		// Passages from the other strategists that NeuroBrain handed to the model.
+		const consulted = []
+			.concat((a.pdf_evidence && a.pdf_evidence.strategists) || [])
+			.concat((a.evidence && a.evidence.strategists) || [])
+			.filter((s) => s && s.citation && s.excerpt);
+		if (consulted.length) {
+			box.append(el('div', 'jc-label', 'Classic strategists consulted'));
+			consulted.slice(0, 3).forEach((s) => {
+				box.append(strategistRow(strategistInitial(s.author), s.citation, s.excerpt, s.url));
+			});
+		}
+		c.append(box);
+	}
+	return c;
+}
+
+function strategistInitial(author) {
+	const name = String(author || '').replace(/^(La|Baltasar|Arthur)\s+/i, '').trim();
+	return name ? name.charAt(0).toUpperCase() : '§';
+}
+
+// One cited passage: who said it, where, the text, and a link to the public-domain source.
+function strategistRow(mark, citation, text, url) {
+	const row = el('div', 'jc-sug');
+	row.append(el('div', 'jc-sug-num', mark || '§'));
+	const body = el('div', 'jc-sug-body');
+	body.append(el('div', 'jc-sug-text', citation || ''));
+	body.append(el('div', 'jc-sug-reason', text || ''));
+	if (url && /^https:\/\//i.test(String(url))) {
+		const link = el('a', 'jc-hint', 'Open source text');
+		link.href = String(url);
+		link.target = '_blank';
+		link.rel = 'noopener noreferrer';
+		body.append(link);
+	}
+	row.append(body);
+	return row;
+}
+
+function buildNeuroBibleLabCard() {
+	const lab = S.neuroBibleLab;
+	const c = card('Scripture & Theology', 'doc');
+	c.append(el('div', 'jc-hint', 'Exact public-domain Bible text (Berean Standard Bible, KJV): safe to show on screen. Type words to find, or a reference like "Romans 8:28" to quote and study it.'));
+
+	const trSel = el('select');
+	[['BSB', 'Berean Standard Bible'], ['KJV', 'King James Version']].forEach(([val, lbl]) => {
+		const o = el('option', null, lbl);
+		o.value = val;
+		trSel.append(o);
+	});
+	trSel.value = lab.translation || 'BSB';
+	trSel.addEventListener('change', () => { lab.translation = trSel.value; });
+	c.append(field('Translation', trSel));
+
+	const comSel = el('select');
+	[
+		['matthew-henry', 'Matthew Henry'], ['john-gill', 'John Gill'], ['john-calvin', 'John Calvin'],
+		['adam-clarke', 'Adam Clarke'], ['jamieson-fausset-brown', 'Jamieson-Fausset-Brown'],
+		['keil-delitzsch', 'Keil & Delitzsch (Old Testament)'], ['tyndale', 'Tyndale study notes']
+	].forEach(([val, lbl]) => {
+		const o = el('option', null, lbl);
+		o.value = val;
+		comSel.append(o);
+	});
+	comSel.value = lab.commentary || 'matthew-henry';
+	comSel.addEventListener('change', () => { lab.commentary = comSel.value; });
+	c.append(field('Commentary (for Study)', comSel));
+
+	const inp = el('input');
+	inp.type = 'text';
+	inp.placeholder = 'e.g. faith without works · Romans 8:28 · Last Supper';
+	inp.value = lab.query || '';
+	inp.addEventListener('input', () => { lab.query = inp.value; });
+	c.append(field('Words, reference or art subject', inp));
+
+	const run = async (mode) => {
+		const qText = inp.value.trim();
+		if (!qText || lab.busy) return;
+		lab.query = qText;
+		lab.busy = mode;
+		renderBrain();
+		let res;
+		if (mode === 'study') res = await send({ action: 'neuroBibleStudy', reference: qText, commentary: lab.commentary, translation: lab.translation });
+		else if (mode === 'art') res = await send({ action: 'neuroChristianArt', query: qText, limit: 6 });
+		else res = await send({ action: 'neuroBibleSearch', query: qText, translation: lab.translation, topK: 5 });
+		lab.busy = '';
+		if (res.error) {
+			toast(res.error, 'err', 6000);
+		} else {
+			lab.results = mode === 'search' ? res.results : null;
+			lab.study = mode === 'study' ? res.study : null;
+			lab.art = mode === 'art' ? res.art : null;
+		}
+		renderBrain();
+	};
+	inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') run('search'); });
+	const actions = el('div', 'jc-actions');
+	actions.append(button(lab.busy === 'search' ? 'Searching…' : 'Search', { small: true, primary: true, disabled: !!lab.busy, onClick: () => run('search') }));
+	actions.append(button(lab.busy === 'study' ? 'Studying…' : 'Study passage', { small: true, disabled: !!lab.busy, onClick: () => run('study') }));
+	actions.append(button(lab.busy === 'art' ? 'Finding art…' : 'Find art', { small: true, disabled: !!lab.busy, onClick: () => run('art') }));
+	c.append(actions);
+
+	const clip = (t, n) => { const s = String(t || ''); return s.length > n ? s.slice(0, n) + '…' : s; };
+
+	if (lab.results) {
+		const box = el('div', 'jc-neuro-box');
+		const r = lab.results;
+		(Array.isArray(r.passages) ? r.passages : []).forEach((p) => box.append(strategistRow('✝', p.citation, p.text, null)));
+		(Array.isArray(r.chunks) ? r.chunks : []).slice(0, 5).forEach((ch) => {
+			box.append(strategistRow('§', ch.heading ? `${ch.citation} · ${ch.heading}` : ch.citation, ch.text, null));
+		});
+		const creeds = Array.isArray(r.creeds) ? r.creeds : [];
+		if (creeds.length) box.append(el('div', 'jc-label', 'Creeds & confessions'));
+		creeds.slice(0, 3).forEach((cr) => box.append(strategistRow('¶', cr.citation, clip(cr.text, 360), cr.url)));
+		if (!box.childNodes.length) {
+			box.append(el('div', 'jc-hint', 'No verse shares those words. Use the words the verse would use, or give a reference.'));
+		}
+		c.append(box);
+	}
+
+	if (lab.study) {
+		const st = lab.study;
+		const box = el('div', 'jc-neuro-box');
+		if (st.passage && st.passage.text) box.append(strategistRow('✝', st.passage.citation, st.passage.text, null));
+		if (st.kjv && st.kjv.text) box.append(strategistRow('✝', st.kjv.citation, st.kjv.text, null));
+		const words = Array.isArray(st.key_words) ? st.key_words : [];
+		if (words.length) {
+			box.append(el('div', 'jc-label', 'Key words in the original'));
+			box.append(chips(words.slice(0, 10).map((w) => `${w.transliteration || w.word} (${w.strongs}) — ${w.lexicon_gloss || w.english || ''}`)));
+		}
+		const refs = Array.isArray(st.cross_references) ? st.cross_references : [];
+		if (refs.length) box.append(el('div', 'jc-label', 'Cross-references'));
+		refs.slice(0, 6).forEach((x) => box.append(strategistRow('↔', x.citation, clip(x.text, 260), null)));
+		const notes = (st.commentary && Array.isArray(st.commentary.notes)) ? st.commentary.notes : [];
+		if (notes.length) box.append(el('div', 'jc-label', `${st.commentary.commentary_name} (${st.commentary.license})`));
+		notes.slice(0, 2).forEach((n) => box.append(strategistRow('✎', n.citation, n.text, null)));
+		c.append(box);
+	}
+
+	if (lab.art) {
+		const box = el('div', 'jc-neuro-box');
+		const works = Array.isArray(lab.art.artworks) ? lab.art.artworks : [];
+		works.forEach((w) => {
+			const row = strategistRow('🖼', w.title || 'Untitled', [w.artist, w.date].filter(Boolean).join(' · '), w.image_url_large || w.image_url);
+			const link = row.querySelector ? row.querySelector('a') : null;
+			if (link) link.textContent = 'Open image (CC0 public domain)';
+			box.append(row);
+		});
+		if (!works.length) box.append(el('div', 'jc-hint', 'No public-domain artwork found for that subject.'));
+		c.append(box);
+	}
+	return c;
+}
+
+function buildNeuroStrategistsLabCard() {
+	const lab = S.neuroStratLab;
+	const c = card('Search the Strategists', 'doc');
+	c.append(el('div', 'jc-hint', 'Sun Tzu, La Rochefoucauld, Schopenhauer, Gracián and Chanakya in public-domain translations, plus Machiavelli. Keyword search: use the words the passage would use.'));
+
+	const authorSel = el('select');
+	[
+		['', 'All authors'],
+		['sun_tzu', 'Sun Tzu — The Art of War'],
+		['gracian', 'Gracián — The Art of Worldly Wisdom'],
+		['la_rochefoucauld', 'La Rochefoucauld — Maxims'],
+		['schopenhauer', 'Schopenhauer — Essays'],
+		['chanakya', 'Chanakya — Arthashastra']
+	].forEach(([val, lbl]) => {
+		const o = el('option', null, lbl);
+		o.value = val;
+		authorSel.append(o);
+	});
+	authorSel.value = lab.author || '';
+	authorSel.addEventListener('change', () => { lab.author = authorSel.value; });
+	c.append(field('Author', authorSel));
+
+	const row = el('div', 'jc-inline-row');
+	const inp = el('input');
+	inp.type = 'text';
+	inp.placeholder = 'e.g. envy of rivals · spies and deception · win an argument';
+	inp.value = lab.query || '';
+	inp.addEventListener('input', () => { lab.query = inp.value; });
+	const runSearch = async () => {
+		const qText = inp.value.trim();
+		if (!qText || lab.busy) return;
+		lab.query = qText;
+		lab.busy = true;
+		renderBrain();
+		const res = await send({ action: 'neuroStrategistsSearch', query: qText, author: lab.author || '', topK: 5 });
+		lab.busy = false;
+		if (res.error) toast(res.error, 'err', 6000);
+		else lab.results = res.results;
+		renderBrain();
+	};
+	inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') runSearch(); });
+	row.append(inp, button(lab.busy ? '…' : 'Search', { small: true, disabled: lab.busy, onClick: runSearch }));
+	c.append(row);
+
+	if (lab.results) {
+		const box = el('div', 'jc-neuro-box');
+		const hits = Array.isArray(lab.results.chunks) ? lab.results.chunks : [];
+		const clip = (t) => { const s = String(t || ''); return s.length > 420 ? s.slice(0, 420) + '…' : s; };
+		hits.slice(0, 5).forEach((ch) => {
+			box.append(strategistRow(strategistInitial(ch.author), ch.citation, clip(ch.text), ch.url));
+		});
+		(Array.isArray(lab.results.machiavelli) ? lab.results.machiavelli : []).slice(0, 2).forEach((m) => {
+			box.append(strategistRow('M', `Machiavelli, ${m.citation || ''}`, clip(m.text), m.url));
+		});
+		if (!box.childNodes.length) {
+			box.append(el('div', 'jc-hint', 'No passage shares words with that query. Try the plain nouns: "enemy", "flattery", "patience".'));
 		}
 		c.append(box);
 	}
@@ -2761,6 +3032,16 @@ function renderSettings() {
 	neuroCard.append(testRow);
 	v.append(neuroCard);
 
+	// YouTube API (mass update)
+	const ytCard = card('Mass update via YouTube API', null);
+	const ytId = el('input');
+	ytId.type = 'text';
+	ytId.placeholder = 'xxxxxxxx.apps.googleusercontent.com';
+	ytId.value = s.ytClientId || '';
+	const redirectUri = chrome.runtime.getURL('').replace(/^chrome-extension:\/\/([a-p]{32})\/$/, 'https://$1.chromiumapp.org/');
+	ytCard.append(field('Google OAuth client ID (Web application)', ytId, 'When set, Mass optimize runs in the background with no Studio tabs, using about 51 of your 10,000 daily YouTube API units per video. Add this authorized redirect URI to the client: ' + redirectUri));
+	v.append(ytCard);
+
 	// Behaviour
 	const beh = card('Studio behaviour', null);
 	const auto = el('label', 'jc-check');
@@ -2812,6 +3093,7 @@ function renderSettings() {
 				useNeuroBrain: neuroCb.checked,
 				neuroBrainUrl: neuroUrl.value.trim(),
 				autoApply: autoCb.checked,
+				ytClientId: ytId.value.trim(),
 				channelProfile: profile
 			};
 			await storageSet({
@@ -2823,8 +3105,10 @@ function renderSettings() {
 				useNeuroBrain: S.settings.useNeuroBrain,
 				neuroBrainUrl: S.settings.neuroBrainUrl,
 				autoApply: S.settings.autoApply,
+				ytClientId: S.settings.ytClientId,
 				channelProfile: profile
 			});
+			await storageSet({ ytToken: '', ytTokenExp: 0 });
 			refreshNeuroHealth(false);
 			toast('Settings saved.');
 			setTab('overview');
@@ -2850,7 +3134,7 @@ async function loadSettings() {
 	S.settings = await storageGet([
 		'geminiApiKey', 'model', 'thinkingLevel', 'imageModel', 'useSearch',
 		'useNeuroBrain', 'neuroBrainUrl', 'autoApply', 'channelProfile',
-		'contentType', 'watchByUrl', 'panelCollapsed'
+		'contentType', 'watchByUrl', 'panelCollapsed', 'ytClientId'
 	]);
 	const options = await send({ action: 'getOptions' });
 	S.options = options && !options.error ? options : null;
@@ -2875,6 +3159,10 @@ async function runAnalyze() {
 	const m = S.meta;
 	const runKey = sourceKey();
 	if (!m || (!m.title && !S.sources.script.text)) {
+		if (IS_STUDIO && S.mode === 'single' && m && m.videoId) {
+			const { massUpdateQueue: mq = [] } = await storageGet('massUpdateQueue');
+			if (mq[0] === m.videoId) { setTimeout(() => send({ action: 'massUpdateNext' }), 1500); return; }
+		}
 		toast(IS_STUDIO
 			? 'Could not read the title field. Wait for the video details to load, or add a script.'
 			: 'Could not read this video. Refresh the page and try again.', 'err', 5000);
@@ -2915,6 +3203,7 @@ async function runAnalyze() {
 
 	const payload = {
 		...m,
+		massUpdate: inMass,
 		contentType: S.settings.contentType || '',
 		profile: S.settings.channelProfile || {},
 		script: S.sources.script.text || '',
@@ -3126,11 +3415,61 @@ function collectStudioVideoIds() {
 	return ids;
 }
 
+// Tick the checkboxes in Studio's video list to pick videos; with nothing
+// ticked, every video on the page is used.
+function collectSelectedVideoIds() {
+	const ids = [];
+	const ID_EDIT = /\/video\/([A-Za-z0-9_-]{11})\//;
+	document.querySelectorAll('ytcp-video-row').forEach((row) => {
+		const box = row.querySelector('ytcp-checkbox-lit, [role="checkbox"], input[type="checkbox"]');
+		if (!box) return;
+		const on = box.getAttribute('aria-checked') === 'true' || box.hasAttribute('checked') || box.checked === true;
+		if (!on) return;
+		const a = row.querySelector('a[href*="/video/"]');
+		const m = a && (a.getAttribute('href') || '').match(ID_EDIT);
+		if (m && !ids.includes(m[1])) ids.push(m[1]);
+	});
+	return ids;
+}
+
+function targetVideoIds() {
+	const selected = collectSelectedVideoIds();
+	return selected.length ? { ids: selected, selected: true } : { ids: collectStudioVideoIds(), selected: false };
+}
+
+function updateMassSelection() {
+	const info = q('massInfo');
+	const btn = q('massBtn');
+	if (!info || !btn || S.mode !== 'mass') return;
+	const { ids, selected } = targetVideoIds();
+	const n = ids.length;
+	info.textContent = selected
+		? `${n} selected video${n === 1 ? '' : 's'}. Tick or untick videos in the list to change this.`
+		: `${n} video${n === 1 ? '' : 's'} on this page. Tick the boxes in the list to optimize only some.`;
+	const label = btn.querySelector('span:last-child');
+	if (label && !/via API|Processing/i.test(label.textContent)) {
+		label.textContent = `Mass optimize ${n} ${selected ? 'selected ' : ''}video${n === 1 ? '' : 's'}`;
+	}
+	if (!/via API|Processing/i.test(label ? label.textContent : '')) btn.disabled = !n;
+}
+
 async function startMassUpdate() {
-	const vids = collectStudioVideoIds();
+	const vids = targetVideoIds().ids;
 	if (!vids.length) { toast('No videos found on this page.', 'err'); return; }
 	const btn = q('massBtn');
 	if (btn) btn.disabled = true;
+	const { ytClientId } = await storageGet('ytClientId');
+	if (!ytClientId) {
+		// No silent fallback to the tab method: it opened a tab per video.
+		toast('Mass update needs your Google OAuth client ID. Open Settings, fill in "Mass update via YouTube API" and save.', 'err', 9000);
+		if (btn) btn.disabled = false;
+		toggleView('settings');
+		return;
+	}
+	const r = await send({ action: 'startApiMassUpdate', vids });
+	if (r.error) { toast(r.error, 'err', 8000); if (btn) btn.disabled = false; return; }
+	toast(`Mass update started for ${r.count} videos. It runs in the background with no tabs.`, 'ok', 6000);
+	return;
 	const res = await send({ action: 'startMassUpdate', vids });
 	if (res.error) { toast(res.error, 'err'); if (btn) btn.disabled = false; return; }
 	toast(`Mass update started for ${vids.length} videos. Each opens in a background tab.`, 'ok', 6000);
@@ -3149,6 +3488,7 @@ function clickSaveAndContinue() {
 }
 
 chrome.storage.onChanged.addListener((changes) => {
+	if (changes.apiMassState) reflectApiMass(changes.apiMassState.newValue || {});
 	if (!changes.massUpdateQueue) return;
 	reflectMassQueue((changes.massUpdateQueue.newValue || []).length, false);
 });
@@ -3169,8 +3509,22 @@ function checkMassUpdateQueue() {
 			storageSet({ massUpdateQueue: [], massUpdateStarted: 0 });
 			return;
 		}
-		// Give Studio time to populate the form, then run.
-		setTimeout(() => { if (S.panel) runAnalyze(); }, 3500);
+		// Studio populates the form slowly, especially in a background tab.
+		// Poll for the panel and the title field instead of a fixed delay, and
+		// if it never shows up, skip this video so the queue cannot stall.
+		const started = Date.now();
+		const tick = () => {
+			if (S.panel) refreshMeta({ silent: true });
+			const ready = S.panel && S.meta && S.meta.title && S.meta.videoId === videoId;
+			if (ready) { setTimeout(() => runAnalyze(), 1500); return; }
+			if (Date.now() - started > 45000) {
+				console.warn('JCVIQ: mass update skipped', videoId, '- Studio form never loaded');
+				send({ action: 'massUpdateNext' });
+				return;
+			}
+			setTimeout(tick, 1000);
+		};
+		setTimeout(tick, 2000);
 	});
 }
 
@@ -3324,7 +3678,7 @@ if (window.matchMedia) {
 setInterval(() => {
 	if (isTargetPage()) {
 		if (!S.panel || !S.panel.isConnected) mountPanel();
-		else { placePanel(); refreshMeta({ silent: true }); }
+		else { placePanel(); refreshMeta({ silent: true }); updateMassSelection(); }
 	} else if (S.panel) {
 		removePanel();
 	}
