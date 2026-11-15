@@ -130,8 +130,6 @@ async function setApiMassState(patch) {
 
 async function startApiMassUpdate(vids) {
 	if (apiMassRunning) return { error: 'A mass update is already running.' };
-	const settings = await getSettings();
-	if (!settings.apiKey) return { error: 'No Gemini API key configured. Open Settings in the panel and add your key.' };
 	try { await getYtToken(true); } catch (e) { return { error: e.message }; }
 	const ids = Array.from(new Set(vids)).filter((id) => /^[A-Za-z0-9_-]{11}$/.test(id));
 	if (!ids.length) return { error: 'No videos to update.' };
@@ -151,7 +149,7 @@ async function cancelApiMassUpdate() {
 
 async function apiMassRun(ids) {
 	apiMassRunning = true;
-	// Keeps the worker alive across long Gemini calls.
+	// Keeps the worker alive across long local-model calls.
 	const beat = setInterval(() => chrome.runtime.getPlatformInfo(() => {}), 20000);
 	let done = 0;
 	let failed = 0;
@@ -188,11 +186,11 @@ async function apiMassRun(ids) {
 						massUpdate: true
 					}, (step) => { setApiMassState({ step }); });
 					if (res.error || !res.optimization) {
-						const err = res.error || 'Gemini returned nothing usable.';
+						const err = res.error || 'The local model returned nothing usable.';
 						if (/api key/i.test(err)) { message = err; break outer; }
 						throw new Error(err);
 					}
-					if (res.optimization._truncated) throw new Error('Gemini output was cut off; skipped.');
+					if (res.optimization._truncated) throw new Error('Local model output was cut off; skipped.');
 					const meta = buildApiMetadata(res.optimization, { title: sn.title, description: sn.description, tags: sn.tags }, lengthSec);
 					backup[id] = { title: sn.title, description: sn.description || '', tags: sn.tags || [], categoryId: sn.categoryId, at: Date.now() };
 					await chrome.storage.local.set({ jcMassBackup: backup });

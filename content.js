@@ -11,7 +11,6 @@ const IS_STUDIO = location.hostname === 'studio.youtube.com';
 const PANEL_ID = 'jcviq-panel';
 const HANDLE_ID = 'jcviq-handle';
 const UPLOAD_CHUNK = 8 * 1024 * 1024;          // multiple of 256 KiB (resumable protocol rule)
-const MAX_VIDEO_BYTES = 2 * 1024 * 1024 * 1024; // Gemini Files API per-file limit
 const MAX_SCRIPT_CHARS = 120000;
 const HISTORY_LIMIT = 40;
 const YT_TAGS_MAX = 500;
@@ -132,7 +131,7 @@ async function runJob(action, payload, opts = {}) {
 		if (res.jobMissing) return { error: 'Chrome restarted the extension\'s background worker mid-request. Run it again.' };
 		return res;
 	}
-	return { error: 'Timed out waiting for Gemini. Try again.' };
+	return { error: 'Timed out waiting for the local model. Try again.' };
 }
 
 function sleep(ms) {
@@ -740,7 +739,6 @@ function buildPanel() {
 		</div>
 		<div class="jc-toast" data-jc="toast" hidden></div>
 		<input type="file" data-jc="scriptFile" accept=".txt,.md,.srt,.vtt,.json,.py,.csv,.tsv,.rtf,text/plain" hidden>
-		<input type="file" data-jc="videoFile" accept="video/*,.mp4,.mov,.mkv,.webm,.avi" hidden>
 		<input type="file" data-jc="thumbFile" accept="image/*" hidden>
 	`;
 
@@ -749,7 +747,6 @@ function buildPanel() {
 	panel.querySelector('[data-jc="btnCollapse"]').addEventListener('click', () => setCollapsed(!panel.classList.contains('jc-collapsed')));
 	panel.querySelectorAll('.jc-tab').forEach((btn) => btn.addEventListener('click', () => setTab(btn.dataset.tab)));
 	panel.querySelector('[data-jc="scriptFile"]').addEventListener('change', onScriptFile);
-	panel.querySelector('[data-jc="videoFile"]').addEventListener('change', onVideoFile);
 	panel.querySelector('[data-jc="thumbFile"]').addEventListener('change', onThumbFile);
 
 	// Keep YouTube's global keyboard shortcuts (k, j, f…) from firing while typing in the panel.
@@ -1023,37 +1020,6 @@ function renderSources() {
 		c.append(editor);
 	}
 
-	// Video file
-	{
-		const vf = s.video;
-		let status = 'Not added — upload the rendered file for full analysis';
-		let tone = '';
-		if (vf) {
-			if (vf.phase === 'uploading') { status = `Uploading ${Math.round((vf.progress || 0) * 100)}% · ${fmtBytes(vf.size)}`; tone = 'busy'; }
-			else if (vf.phase === 'processing') { status = `Processing on Gemini… · ${vf.fileName}`; tone = 'busy'; }
-			else if (vf.phase === 'ready') { status = `Ready · ${vf.fileName} · ${fmtBytes(vf.size)}`; tone = 'on'; }
-			else if (vf.phase === 'error') { status = vf.message || 'Upload failed'; tone = 'bad'; }
-		}
-		const row = sourceRow('video', 'Video file', status);
-		if (tone) row.classList.add(tone);
-		const actions = row.querySelector('.jc-src-actions');
-		if (!vf || vf.phase === 'error' || vf.phase === 'ready') {
-			actions.append(button(vf && vf.phase === 'ready' ? 'Replace' : 'Choose', { small: true, icon: 'upload', onClick: () => q('videoFile').click() }));
-		}
-		if (vf && vf.phase !== 'uploading') actions.append(iconButton('close', 'Remove video', () => removeVideo()));
-		c.append(row);
-		if (vf && vf.phase === 'uploading') {
-			const p = el('div', 'jc-progress');
-			const f = el('i');
-			f.style.width = Math.round((vf.progress || 0) * 100) + '%';
-			p.append(f);
-			c.append(p);
-		}
-		if (vf && vf.phase === 'ready' && vf.expirationTime) {
-			c.append(el('div', 'jc-hint', `Stored by Google for analysis until ${new Date(vf.expirationTime).toLocaleString()}, then deleted.`));
-		}
-	}
-
 	// Thumbnail
 	{
 		const th = s.thumb;
@@ -1174,115 +1140,6 @@ async function onThumbFile(e) {
 	}
 }
 
-/* ---- Video upload (Gemini Files API, chunked through the service worker) ---- */
-
-async function onVideoFile(e) {
-	const file = e.target.files && e.target.files[0];
-	e.target.value = '';
-	if (!file) return;
-	if (file.size > MAX_VIDEO_BYTES) { toast('Gemini accepts video files up to 2 GB.', 'err'); return; }
-	if (S.sources.video && S.sources.video.phase === 'uploading') { toast('An upload is already running.', 'warn'); return; }
-
-	const previous = S.sources.video;
-	if (previous && previous.name) send({ action: 'fileDelete', name: previous.name });
-	const uploadKey = sourceKey();
-
-	S.sources.video = { phase: 'uploading', progress: 0, fileName: file.name, size: file.size, mimeType: file.type || 'video/mp4', key: sourceKey() };
-	renderSources();
-
-	try {
-		const start = await send({ action: 'uploadStart', fileName: file.name, size: file.size, mimeType: file.type || 'video/mp4' });
-		if (start.error) throw new Error(start.error);
-		let offset = 0;
-		let info = null;
-		while (offset < file.size) {
-			const end = Math.min(offset + UPLOAD_CHUNK, file.size);
-			const data = await blobToBase64(file.slice(offset, end));
-			const last = end >= file.size;
-			const res = await send({ action: 'uploadChunk', uploadUrl: start.uploadUrl, offset, data, last });
-			if (res.error) throw new Error(res.error);
-			offset = end;
-			if (S.sources.video && S.sources.video.phase === 'uploading' && sourceKey() === uploadKey) {
-				S.sources.video.progress = offset / file.size;
-				renderSources();
-			}
-			if (last) info = res.file;
-		}
-		if (!info || !info.uri) throw new Error('Upload finished but Gemini returned no file reference.');
-		const uploaded = {
-			phase: info.state === 'ACTIVE' ? 'ready' : 'processing',
-			name: info.name, uri: info.uri, mimeType: info.mimeType || file.type || 'video/mp4',
-			fileName: file.name, size: file.size, expirationTime: info.expirationTime, key: uploadKey
-		};
-		if (sourceKey() !== uploadKey) {
-			// The user moved to another video mid-upload. File it under the
-			// video it belongs to instead of attaching it to this page.
-			await persistSources(uploadKey, uploaded);
-			toast(`The upload of ${file.name} finished. It is saved on the video you started it from.`, 'warn', 7000);
-			return;
-		}
-		S.sources.video = uploaded;
-		await persistSources();
-		renderSources();
-		if (S.sources.video.phase === 'processing') pollVideo();
-		else toast('Video ready for analysis.');
-	} catch (err) {
-		if (sourceKey() === uploadKey) {
-			S.sources.video = { phase: 'error', message: err.message || 'Upload failed', fileName: file.name, size: file.size };
-			renderSources();
-		}
-		toast(err.message || 'Upload failed.', 'err', 6000);
-	}
-}
-
-function pollVideo() {
-	clearTimeout(S.pollTimer);
-	const started = Date.now();
-	const tick = async () => {
-		const vf = S.sources.video;
-		if (!vf || vf.phase !== 'processing') return;
-		const res = await send({ action: 'fileStatus', name: vf.name });
-		if (S.sources.video !== vf) return; // the user moved on or replaced it
-		if (res.error) { toast(res.error, 'err'); return; }
-		if (res.missing) {
-			S.sources.video = null;
-			await persistSources();
-			renderSources();
-			toast('The uploaded video has expired on Gemini. Upload it again.', 'warn');
-			return;
-		}
-		const f = res.file || {};
-		if (f.state === 'ACTIVE') {
-			S.sources.video = { ...vf, phase: 'ready', uri: f.uri || vf.uri, expirationTime: f.expirationTime || vf.expirationTime };
-			await persistSources();
-			renderSources();
-			toast('Video ready for analysis.');
-			return;
-		}
-		if (f.state === 'FAILED') {
-			S.sources.video = { phase: 'error', message: 'Gemini could not process this video file.', fileName: vf.fileName, size: vf.size };
-			await persistSources();
-			renderSources();
-			return;
-		}
-		if (Date.now() - started > 15 * 60 * 1000) {
-			toast('Gemini is still processing the video. Try again in a minute.', 'warn');
-			return;
-		}
-		S.pollTimer = setTimeout(tick, 4000);
-	};
-	S.pollTimer = setTimeout(tick, 3000);
-}
-
-async function removeVideo() {
-	const vf = S.sources.video;
-	S.sources.video = null;
-	clearTimeout(S.pollTimer);
-	if (vf && vf.name) send({ action: 'fileDelete', name: vf.name });
-	await persistSources();
-	renderSources();
-}
-
 /* ---- Sources persistence (per video) ---- */
 
 // Saves the script and video for the video on screen, or, when a slow upload
@@ -1319,13 +1176,8 @@ async function loadSources() {
 	const entry = jcSources[sourceKey()] || {};
 	S.sources.script = entry.script ? { text: entry.script.text || '', name: entry.script.name || '' } : { text: '', name: '' };
 	S.sources.thumb = null;
-	const vf = entry.video;
-	if (vf && vf.uri && (!vf.expirationTime || new Date(vf.expirationTime).getTime() > Date.now() + 60000)) {
-		S.sources.video = { ...vf, key: sourceKey() };
-		if (vf.phase === 'processing') pollVideo();
-	} else {
-		S.sources.video = null;
-	}
+	// Uploaded video files were a Gemini feature; local mode reads public videos by URL through NeuroBrain.
+	S.sources.video = null;
 	S.scriptEditorOpen = false;
 }
 
@@ -1359,7 +1211,7 @@ function runCard() {
 		cb.type = 'checkbox';
 		cb.checked = Boolean(S.settings.watchByUrl);
 		cb.addEventListener('change', () => { S.settings.watchByUrl = cb.checked; storageSet({ watchByUrl: cb.checked }); });
-		t.append(cb, el('span', null, 'Let Gemini watch this video by URL (public videos only, slower)'));
+		t.append(cb, el('span', null, 'When YouTube captions are missing, let NeuroBrain download and transcribe this video locally (public videos, free, adds 1-3 min)'));
 		c.append(t);
 	}
 
@@ -1515,7 +1367,7 @@ function massCard() {
 	const info = paragraph('');
 	info.dataset.jc = 'massInfo';
 	c.append(info);
-	c.append(el('div', 'jc-hint', 'Uploaded video files and scripts are matched by video ID, so add them on each video\'s edit page first if you want grounded results.'));
+	c.append(el('div', 'jc-hint', 'Scripts are matched by video ID, so add them on each video\'s edit page first if you want grounded results.'));
 	const btn = button(`Mass optimize ${count} videos`, { primary: true, icon: 'bolt', disabled: !count });
 	btn.dataset.jc = 'massBtn';
 	setTimeout(updateMassSelection, 0);
@@ -1939,7 +1791,7 @@ async function generateThumbnailFor(key, concept, btn) {
 	}
 	if (!res.image || !res.image.data) {
 		if (slot) slot.innerHTML = '';
-		toast('Gemini returned no image. Try again.', 'err');
+		toast('The local image model returned no image. Try again.', 'err');
 		return;
 	}
 	S.generated[key] = {
@@ -2163,7 +2015,7 @@ function groundingSources() {
 	const links = (g && Array.isArray(g.links) ? g.links : []).filter((l) => l && /^https?:\/\//i.test(String(l.uri || '')));
 	if (!links.length) return null;
 	const wrap = el('div', 'jc-sources-list');
-	wrap.append(el('div', 'jc-label', 'Sources Gemini consulted'));
+	wrap.append(el('div', 'jc-label', 'Sources consulted'));
 	links.forEach((link) => {
 		const a = el('a', 'jc-src-link', String(link.title || link.uri));
 		a.href = link.uri;
@@ -2956,58 +2808,18 @@ function renderSettings() {
 	v.innerHTML = '';
 	const s = S.settings;
 
-	// API
-	const api = card('Gemini API', 'settings');
-	const keyRow = el('div', 'jc-inline-row');
-	const key = el('input');
-	key.type = 'password';
-	key.placeholder = 'AIza…';
-	key.autocomplete = 'off';
-	key.spellcheck = false;
-	key.value = s.geminiApiKey || '';
-	const show = iconButton('eye', 'Show / hide key', () => { key.type = key.type === 'password' ? 'text' : 'password'; });
-	keyRow.append(key, show);
-	api.append(field('API key', keyRow, 'Stored only in this browser. Get a free key at aistudio.google.com/apikey.'));
-
-	// The option lists live in background.js (loaded by loadSettings), so the
-	// worker and the panel can never disagree about what is offered.
-	const opts = S.options || {};
-	const MODEL_OPTIONS = opts.models || [['gemini-3.8-flash', 'Gemini 3.8 Flash (default)']];
-	const model = el('select');
-	MODEL_OPTIONS.forEach(([val, label]) => {
-		const o = el('option', null, label);
-		o.value = val;
-		model.append(o);
+	// Local AI (free): no API key, no Google. Everything runs through NeuroBrain on your own GPUs.
+	const api = card('Local AI (free)', 'settings');
+	api.append(el('div', 'jc-hint', 'JCVIQ uses no Google or Gemini API and costs nothing to run. Titles, descriptions and tags come from gemma4:12b on GAMINGPC-G451 (RTX 5070), with qwen3 4b on gamingpc_rx as backup; thumbnails are rendered by Z-Image Turbo in ComfyUI. All of it is reached through NeuroBrain OS below.'));
+	const localInfo = el('div', 'jc-hint', 'Checking the local models…');
+	api.append(localInfo);
+	send({ action: 'localStatus' }).then((st) => {
+		if (!st || st.error) { localInfo.textContent = 'Could not check the local models.'; return; }
+		if (!st.connected) { localInfo.textContent = 'NeuroBrain is not reachable, so the local models cannot be used. Check the server URL below (use Tailscale when away from home).'; return; }
+		const hosts = (st.llm && Array.isArray(st.llm.hosts)) ? st.llm.hosts.filter((h) => h.up).length : 0;
+		const img = st.image || {};
+		localInfo.textContent = `Text: ${hosts} model host${hosts === 1 ? '' : 's'} up. Thumbnails: ${img.reachable ? 'ComfyUI ready on ' + (img.gpu || 'the RTX 5070') : 'ComfyUI not reachable (' + (img.error || 'start ComfyUI on GAMINGPC-G451') + ')'}. Cost: $0.`;
 	});
-	model.value = MODEL_OPTIONS.some(([val]) => val === s.model) ? s.model : (opts.defaultModel || MODEL_OPTIONS[0][0]);
-	api.append(field('Model', model, 'Google has closed the Gemini 2.5 models to new API users; an older 2.5 setting falls back to the default.'));
-
-	const THINKING_OPTIONS = opts.thinking || [['low', 'Fast — low thinking (default)']];
-	const thinking = el('select');
-	THINKING_OPTIONS.forEach(([val, label]) => {
-		const o = el('option', null, label);
-		o.value = val;
-		thinking.append(o);
-	});
-	thinking.value = THINKING_OPTIONS.some(([val]) => val === s.thinkingLevel) ? s.thinkingLevel : (opts.defaultThinking || 'low');
-	api.append(field('Thinking depth', thinking, 'How long the model reasons before it writes. Deeper is slower and spends more output tokens.'));
-
-	const search = el('label', 'jc-check');
-	const searchCb = el('input');
-	searchCb.type = 'checkbox';
-	searchCb.checked = s.useSearch !== false;
-	search.append(searchCb, el('span', null, 'Google Search grounding (researches the niche and lists the pages it used; slower)'));
-	api.append(search);
-
-	const IMAGE_OPTIONS = opts.imageModels || [['gemini-nano-banana-2.1', 'Nano Banana 2.1 (default)']];
-	const imageModel = el('select');
-	IMAGE_OPTIONS.forEach(([val, label]) => {
-		const o = el('option', null, label);
-		o.value = val;
-		imageModel.append(o);
-	});
-	imageModel.value = IMAGE_OPTIONS.some(([val]) => val === s.imageModel) ? s.imageModel : (opts.defaultImageModel || IMAGE_OPTIONS[0][0]);
-	api.append(field('Thumbnail image model', imageModel, 'Used by the generator on the Thumbnail tab. Billed per image. 2K output clears YouTube\'s 1280×720 recommendation.'));
 	v.append(api);
 
 	// NeuroBrain OS (CORTEX-5)
@@ -3085,11 +2897,6 @@ function renderSettings() {
 			PROFILE_FIELDS.forEach((f) => { const val = inputs[f].value.trim(); if (val) profile[f] = val; });
 			S.settings = {
 				...S.settings,
-				geminiApiKey: key.value.trim(),
-				model: model.value,
-				thinkingLevel: thinking.value,
-				imageModel: imageModel.value,
-				useSearch: searchCb.checked,
 				useNeuroBrain: neuroCb.checked,
 				neuroBrainUrl: neuroUrl.value.trim(),
 				autoApply: autoCb.checked,
@@ -3097,11 +2904,6 @@ function renderSettings() {
 				channelProfile: profile
 			};
 			await storageSet({
-				geminiApiKey: S.settings.geminiApiKey,
-				model: S.settings.model,
-				thinkingLevel: S.settings.thinkingLevel,
-				imageModel: S.settings.imageModel,
-				useSearch: S.settings.useSearch,
 				useNeuroBrain: S.settings.useNeuroBrain,
 				neuroBrainUrl: S.settings.neuroBrainUrl,
 				autoApply: S.settings.autoApply,
@@ -3114,25 +2916,12 @@ function renderSettings() {
 			setTab('overview');
 		}
 	}));
-	actions.append(button('Forget uploaded videos', {
-		small: true,
-		icon: 'trash',
-		onClick: async () => {
-			const { jcSources = {} } = await storageGet('jcSources');
-			Object.values(jcSources).forEach((e) => { if (e.video && e.video.name) send({ action: 'fileDelete', name: e.video.name }); });
-			await storageSet({ jcSources: {} });
-			S.sources.video = null;
-			renderSources();
-			toast('Uploaded videos forgotten.');
-		}
-	}));
 	v.append(actions);
-	v.append(el('div', 'jc-footer', 'JCVIQ · Gemini + NeuroBrain OS (CORTEX-5) YouTube optimizer'));
+	v.append(el('div', 'jc-footer', 'JCVIQ · free local AI + NeuroBrain OS (CORTEX-5) YouTube optimizer'));
 }
 
 async function loadSettings() {
 	S.settings = await storageGet([
-		'geminiApiKey', 'model', 'thinkingLevel', 'imageModel', 'useSearch',
 		'useNeuroBrain', 'neuroBrainUrl', 'autoApply', 'channelProfile',
 		'contentType', 'watchByUrl', 'panelCollapsed', 'ytClientId'
 	]);
@@ -3223,8 +3012,8 @@ async function runAnalyze() {
 
 	const failed = res.error || !res.optimization;
 	if (failed) {
-		toast(res.error || 'Gemini returned nothing usable. Try again.', 'err', 8000);
-		const keyProblem = /api key/i.test(res.error || '');
+		toast(res.error || 'The local model returned nothing usable. Try again.', 'err', 8000);
+		const keyProblem = /not reachable/i.test(res.error || '');
 		if (keyProblem) toggleView('settings');
 		if (inMass) {
 			// A missing key will fail every video, so stop the run; anything

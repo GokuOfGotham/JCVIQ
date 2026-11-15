@@ -1,30 +1,24 @@
 # JCVIQ — Quick Setup
 
-Three steps, about five minutes. See [README.md](README.md) for what the extension does and how it works.
+Two steps, about two minutes. No API key: JCVIQ runs on free local models through NeuroBrain OS. See [README.md](README.md) for what the extension does and how it works.
 
-## 1. Get a Gemini API key
-
-1. Go to [Google AI Studio](https://aistudio.google.com/apikey)
-2. Click **Create API Key**
-3. Copy it — you will paste it into the panel in step 3
-
-## 2. Load the extension
+## 1. Load the extension
 
 1. Open `chrome://extensions/`
 2. Turn on **Developer mode** (top right)
 3. Click **Load unpacked** (top left)
-4. Select the `JCVIQ` folder
+4. Select the `JCVIQ` folder (on this PC: `A:\AI\JCVIQ`)
 
-## 3. Add your key
+## 2. Check the local models
 
 1. Open any YouTube video, or a video's edit page in YouTube Studio
 2. The **panel appears on the page** — there is no popup. The toolbar icon only shows or hides the panel.
 3. Click the **settings** icon in the panel header
-4. Paste your key and click **Save settings**
+4. The **Local AI (free)** card should report the model hosts as up and ComfyUI as ready. If NeuroBrain is not reachable, gamingpc_rx is off, or you are away from home without Tailscale.
 
 While you are in Settings, fill in the channel profile: niche, audience, tone, words to avoid, your call to action. It goes into every prompt and noticeably improves results.
 
-The defaults are Gemini 3.8 Flash with low thinking depth and Google Search grounding on. Flash-Lite is cheaper, 3.1 Pro Preview and 4 Argon go deeper but need a paid API tier. Raising the thinking depth makes runs slower and spends more output tokens; try it when the titles feel generic.
+Text runs on gemma4:12b on the RTX 5070 PC (qwen3 4b on gamingpc_rx when that PC is off); thumbnails on Z-Image Turbo in ComfyUI. A run takes 1-3 minutes and costs nothing.
 
 ---
 
@@ -36,11 +30,11 @@ The single biggest factor is what you give it. A title written from a filename i
 
 This matters more than it used to. YouTube has closed off direct caption access, so JCVIQ now reads captions out of YouTube's own transcript panel, which works on watch pages but not in Studio and not for every video. Your script is the one source that always works.
 
-**Upload the video file** for a video the model cannot otherwise see — anything private, unlisted or still processing. Click **Choose** on the Video file row and pick the rendered file, up to 2 GB. It uploads to Google's Gemini Files API, shows a progress bar, then a processing state, then **Ready**. Google deletes it after 48 hours.
+**Transcribe by URL** for a public video whose captions YouTube will not hand over: tick the option on the watch page and NeuroBrain downloads the video and transcribes it locally with whisper, free. Private and unlisted videos cannot be read this way; add the script instead.
 
 **Pick the content type** before you analyze. It changes the packaging rules substantially — a Short and a documentary get very different title advice.
 
-Then click **Analyze video**. With a video file attached this can take a few minutes, because the model is actually watching it.
+Then click **Analyze video**. Expect 1-3 minutes; a local transcription adds 1-3 more.
 
 ---
 
@@ -93,28 +87,27 @@ If you want every analysis to write into the form automatically, turn on **Auto-
 | Problem | Fix |
 |---|---|
 | No panel on the page | Check the extension is enabled at `chrome://extensions/`, then refresh |
-| "No Gemini API key configured" | Settings → paste key → Save settings |
-| Results feel generic | Add the script or upload the video file, and fill in the channel profile |
-| Video stuck on "Processing" | Large files take time on Google's side; the panel polls for up to 15 minutes |
-| "Gemini could not watch this video by URL" | The video is private or unlisted. Upload the file instead. |
+| "NeuroBrain OS is not reachable" | gamingpc_rx is off, or you are away from home without Tailscale |
+| Results feel generic | Add the script, and fill in the channel profile |
+| Thumbnail fails: ComfyUI not reachable | Start ComfyUI on GAMINGPC-G451 (the "ComfyUI LAN" logon task does it) |
+| "NeuroBrain could not read this video by URL" | The video is private or unlisted. Add the script instead. |
 | Tag count reads zero | Expand "Show more" on the Studio edit page so the tag chips render |
 | No captions were used | YouTube served a transcript panel that fails to load, or the video has none. Add the script. |
 | Generated thumbnail is the wrong shape | Check the shape badge; let the player load, or set the content type to YouTube Short |
 | Overlay text is misspelled in the image | Regenerate, shorten the overlay, or add the text yourself |
 | "Chrome restarted the extension's background worker" | Rare; Chrome recycled the worker mid-request. Run the analysis again. |
-| "Search grounding is not available for this model" | The run completed without live research. Switch to 3.8 Flash in Settings to get it back. |
 
 ---
 
-## Optional: local key fallback
+## Optional: NeuroBrain URL override
 
-`background.js` reads the key from `chrome.storage.local` first, then falls back to `config.js` if it exists. To use it, copy `config.example.js` to `config.js` and paste your key there. `config.js` is gitignored. Most people should just use the Settings panel and skip this.
+JCVIQ finds NeuroBrain on its own (LAN first, then Tailscale). To pin a different server, set it in Settings, or copy `config.example.js` to `config.js` and set `NEUROBRAIN_API_URL` there. `config.js` is gitignored.
 
 ## Mass update with the YouTube API (no tabs)
 
 1. In Google Cloud Console, create a project, enable **YouTube Data API v3**, and configure the OAuth consent screen (add yourself as a test user).
 2. Create an OAuth client ID of type **Web application**. Under Authorized redirect URIs add the `https://<extension-id>.chromiumapp.org/` address shown in JCVIQ Settings > "Mass update via YouTube API".
 3. Paste the client ID into that Settings field and save.
-4. On the Studio videos page, run Mass optimize. The first run asks you to sign in to Google; after that it runs in the background, using the local NeuroBrain server and Gemini, and writes each video through the API.
+4. On the Studio videos page, run Mass optimize. The first run asks you to sign in to Google; after that it runs in the background, using the free local models through NeuroBrain, and writes each video through the YouTube Data API (free within its daily quota).
 
 Each video costs about 51 of the default 10,000 daily quota units (roughly 190 videos a day). The run stops cleanly when the quota is hit. Original titles, descriptions and tags are backed up, and "Restore originals" puts them back.

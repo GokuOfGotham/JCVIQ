@@ -1,18 +1,19 @@
 // background.js - JCVIQ service worker.
-//  - Talks to the Gemini API (generateContent + Files API uploads).
+//  - 100% free local AI, no Google / Gemini API: every text and image call goes to NeuroBrain OS, which runs
+//    gemma4:12b (text, vision) on GAMINGPC-G451's RTX 5070 with qwen3 4b on gamingpc_rx as backup, and renders
+//    thumbnails with Z-Image Turbo in ComfyUI. Cost per run: $0.
 //  - Connects to NeuroBrain OS (CORTEX-5) on gamingpc_rx (with automatic LAN and
 //    Tailscale failover) to ground titles, hooks, thumbnails and strategy in
 //    0-5s computational neuroscience, the Society for Neuroscience 'Brain Facts'
 //    PDF (435 chunks + 136 glossary terms), and 5 live Open Neuroscience APIs.
-//  - Runs long Gemini and NeuroBrain calls as jobs the panel polls, so Chrome's
+//  - Runs long NeuroBrain calls as jobs the panel polls, so Chrome's
 //    service worker limits never cut an analysis short.
 //  - Fetches the current thumbnail. (Captions come from the content script,
 //    which reads YouTube's own transcript panel; the timedtext endpoint
 //    answers extensions with an empty body.)
 //  - Orchestrates the Studio mass-update tab queue.
 //
-// The API key lives in chrome.storage.local (set from the panel's Settings).
-// A dev fallback can be provided in config.js (gitignored, optional).
+// No API key is needed. config.js (gitignored, optional) can still set NEUROBRAIN_API_URL.
 
 try {
 	importScripts('config.js');
@@ -20,8 +21,6 @@ try {
 	/* config.js is optional */
 }
 importScripts('apimass.js');
-
-const API_BASE = 'https://generativelanguage.googleapis.com';
 
 // NeuroBrain OS (CORTEX-5) default failover endpoints: the 24/7 host gamingpc_rx
 // (LAN IP first, then its Tailscale MagicDNS name for use outside the house),
@@ -34,47 +33,15 @@ const NEUROBRAIN_ENDPOINTS = [
 ];
 let cachedNeuroBase = null;
 
-// Models offered in Settings. This is the single list; the panel asks for it
-// with the getOptions message, so the two never drift apart.
-//
-// Text: the 2.5 family is closed to new API users, and every model here takes
-// a thinking *level* rather than a numeric budget (see buildGenerationConfig).
-// Stored values outside the list fall back to the default, so an old
-// "gemini-2.5-flash" setting keeps working.
-const MODEL_OPTIONS = [
-	['gemini-3.8-flash', 'Gemini 3.8 Flash — fast, recommended (default)'],
-	['gemini-3.5-flash-lite', 'Gemini 3.5 Flash-Lite — cheapest'],
-	['gemini-3.1-pro-preview', 'Gemini 3.1 Pro Preview — deeper, slower, paid tier only'],
-	['gemini-4-argon', 'Gemini 4 Argon — flagship, paid tier only']
-];
-const DEFAULT_MODEL = 'gemini-3.8-flash';
-const MODELS = new Set(MODEL_OPTIONS.map(([id]) => id));
-
-const THINKING_OPTIONS = [
-	['low', 'Fast — low thinking (default)'],
-	['medium', 'Balanced — medium thinking'],
-	['high', 'Deep — high thinking, slowest']
-];
-const DEFAULT_THINKING = 'low';
-const THINKING_LEVELS = new Set(THINKING_OPTIONS.map(([id]) => id));
-
-// Image models. gemini-3-pro-image-preview was shut down on 2026-06-25 and
-// gemini-2.5-flash-image is deprecated, so both were dropped.
-const IMAGE_OPTIONS = [
-	['gemini-nano-banana-2.1', 'Nano Banana 2.1 — recommended, 2K output (default)'],
-	['gemini-3.1-flash-lite-image', 'Nano Banana 2 Lite — cheapest, 1K only'],
-	['gemini-3-pro-image', 'Nano Banana Pro — best text rendering, slower, 2K output']
-];
-const DEFAULT_IMAGE_MODEL = 'gemini-nano-banana-2.1';
-const IMAGE_MODELS = new Set(IMAGE_OPTIONS.map(([id]) => id));
-// A 16:9 image at 1K is about 1024 px wide, under YouTube's 1280x720
-// recommendation. These models can render 2K, which clears it with room.
-const IMAGE_2K_MODELS = new Set(['gemini-nano-banana-2.1', 'gemini-3-pro-image']);
+// Free local models (served by NeuroBrain OS). Shown in Settings and on results.
+const LOCAL_TEXT_MODEL = 'gemma4:12b (local, free)';
+const LOCAL_IMAGE_MODEL = 'Z-Image Turbo (local, free)';
 // YouTube only ever renders a thumbnail in one of these two shapes.
 const ASPECTS = new Set(['16:9', '9:16']);
 
-const TRANSCRIPT_MAX_CHARS = 80000;
-const SCRIPT_MAX_CHARS = 120000;
+// Local models have smaller context windows than Gemini had; these keep a run inside gemma4's 32k window.
+const TRANSCRIPT_MAX_CHARS = 40000;
+const SCRIPT_MAX_CHARS = 50000;
 
 /* ============================ Message routing ============================ */
 
@@ -93,15 +60,12 @@ const HANDLERS = {
 	neuroHealth: (req) => checkNeuroBrainHealth(req && req.customUrl),
 	jobStatus: (req) => jobStatus(req.jobId),
 	getOptions: () => ({
-		models: MODEL_OPTIONS, defaultModel: DEFAULT_MODEL,
-		thinking: THINKING_OPTIONS, defaultThinking: DEFAULT_THINKING,
-		imageModels: IMAGE_OPTIONS, defaultImageModel: DEFAULT_IMAGE_MODEL,
+		local: true,
+		textModel: LOCAL_TEXT_MODEL,
+		imageModel: LOCAL_IMAGE_MODEL,
 		neuroEndpoints: NEUROBRAIN_ENDPOINTS
 	}),
-	uploadStart: (req) => uploadStart(req),
-	uploadChunk: (req) => uploadChunk(req),
-	fileStatus: (req) => fileStatus(req.name),
-	fileDelete: (req) => fileDelete(req.name),
+	localStatus: () => localStatus(),
 	startMassUpdate: (req) => startMassUpdate(req.vids || []),
 	massUpdateNext: (req, sender) => massUpdateNext(sender),
 	cancelMassUpdate: () => cancelMassUpdate(),
@@ -135,7 +99,7 @@ chrome.action.onClicked.addListener((tab) => {
 /* ============================ Long-running jobs ============================ */
 // Chrome stops an extension service worker after 30 s without activity, when
 // a fetch() takes more than 30 s to answer, and when one message handler runs
-// for over 5 minutes. A Gemini run that watches a video can take several
+// for over 5 minutes. A local-model run (and NeuroBrain transcribing a video) can take several
 // minutes, so slow work runs as a job: the panel starts it and then polls
 // jobStatus every couple of seconds. Each poll is a message, which resets the
 // idle timer, and no single handler ever approaches the 5-minute limit.
@@ -173,20 +137,7 @@ function jobStatus(jobId) {
 /* ============================ Settings ============================ */
 
 async function getSettings() {
-	const s = await chrome.storage.local.get([
-		'geminiApiKey', 'model', 'thinkingLevel', 'useSearch',
-		'useNeuroBrain', 'neuroBrainUrl'
-	]);
-	let apiKey = (s.geminiApiKey || '').trim();
-	if (!apiKey) {
-		try {
-			if (typeof CONFIG !== 'undefined' && CONFIG.GEMINI_API_KEY && CONFIG.GEMINI_API_KEY !== 'YOUR_GEMINI_API_KEY_HERE') {
-				apiKey = CONFIG.GEMINI_API_KEY;
-			}
-		} catch (e) {
-			/* config.js not loaded */
-		}
-	}
+	const s = await chrome.storage.local.get(['useNeuroBrain', 'neuroBrainUrl']);
 	let neuroUrl = (s.neuroBrainUrl || '').trim();
 	if (!neuroUrl) {
 		try {
@@ -198,33 +149,13 @@ async function getSettings() {
 		}
 	}
 	return {
-		apiKey: apiKey || null,
-		model: MODELS.has(s.model) ? s.model : DEFAULT_MODEL,
-		thinkingLevel: THINKING_LEVELS.has(s.thinkingLevel) ? s.thinkingLevel : DEFAULT_THINKING,
-		useSearch: s.useSearch !== false,
+		model: LOCAL_TEXT_MODEL,
 		useNeuroBrain: s.useNeuroBrain !== false,
 		neuroBrainUrl: neuroUrl
 	};
 }
 
-async function getImageModel() {
-	const { imageModel } = await chrome.storage.local.get('imageModel');
-	return IMAGE_MODELS.has(imageModel) ? imageModel : DEFAULT_IMAGE_MODEL;
-}
-
-async function requireKey() {
-	const { apiKey } = await getSettings();
-	if (!apiKey) throw new Error('No Gemini API key configured. Open Settings in the panel and add your key.');
-	return apiKey;
-}
-
 /* ============================ HTTP helpers ============================ */
-
-// Google's REST examples send the key as a header. Keeping it out of the URL
-// also keeps it out of proxy and request logs.
-function authHeaders(apiKey, extra) {
-	return { 'x-goog-api-key': apiKey, ...(extra || {}) };
-}
 
 // While any request is in flight, call a cheap extension API every 20 s so
 // the worker's idle timer keeps resetting (see the jobs section above).
@@ -261,23 +192,6 @@ async function fetchWithTimeout(url, ms, options = {}) {
 	}
 }
 
-async function apiErrorMessage(res, prefix) {
-	let message = `${res.status} ${res.statusText}`;
-	try {
-		const body = await res.json();
-		message = (body.error && body.error.message) || body.error || message;
-	} catch (e) {
-		/* non-JSON body */
-	}
-	// Only blame the key when Google does. A 400 is just as often a request
-	// shape the model rejects, and the panel opens Settings whenever an error
-	// mentions the API key.
-	if (res.status === 403 || res.status === 401 || /api[ _-]?key|API_KEY_INVALID|PERMISSION_DENIED|UNAUTHENTICATED/i.test(message)) {
-		message += ' (check that the API key is valid and the Gemini API is enabled)';
-	}
-	return `${prefix}: ${message}`;
-}
-
 function arrayBufferToBase64(buf) {
 	let binary = '';
 	const bytes = new Uint8Array(buf);
@@ -286,19 +200,6 @@ function arrayBufferToBase64(buf) {
 		binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
 	}
 	return btoa(binary);
-}
-
-async function base64ToBytes(b64) {
-	// data: URL decoding is native and much faster than a charCodeAt loop.
-	try {
-		const res = await fetch('data:application/octet-stream;base64,' + b64);
-		return new Uint8Array(await res.arrayBuffer());
-	} catch (e) {
-		const bin = atob(b64);
-		const out = new Uint8Array(bin.length);
-		for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-		return out;
-	}
 }
 
 /* ============================ NeuroBrain OS (CORTEX-5) ============================ */
@@ -373,6 +274,43 @@ async function neuroRequest(path, { method = 'POST', body = null, timeoutMs = 55
 	return null;
 }
 
+// One call to the NeuroBrain server that answers, keeping its error message. Used for the slow local-model
+// calls (text optimization, thumbnails): unlike neuroRequest it never repeats a slow call on a second address,
+// because every address reaches the same server.
+async function neuroCall(path, body, timeoutMs) {
+	const settings = await getSettings();
+	const found = await resolveNeuroBase(settings.neuroBrainUrl || '');
+	if (!found) {
+		throw new Error('NeuroBrain OS is not reachable (tried ' + getNeuroEndpoints(settings.neuroBrainUrl).join(', ') + '). JCVIQ runs on free local models through NeuroBrain on gamingpc_rx, so it needs that server; use Tailscale when away from home.');
+	}
+	const res = await fetchWithTimeout(`${found.base}${path}`, timeoutMs, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(body)
+	});
+	let data = null;
+	try { data = await res.json(); } catch (e) { /* non-JSON body */ }
+	if (!res.ok) {
+		const detail = (data && (data.error || data.detail)) || `${res.status} ${res.statusText}`;
+		throw new Error(typeof detail === 'string' ? detail : JSON.stringify(detail).slice(0, 300));
+	}
+	return { data, endpoint: found.base };
+}
+
+// What the Settings card shows: which local models answer right now.
+async function localStatus() {
+	const settings = await getSettings();
+	const found = await resolveNeuroBase(settings.neuroBrainUrl || '');
+	if (!found) return { connected: false, textModel: LOCAL_TEXT_MODEL, imageModel: LOCAL_IMAGE_MODEL };
+	let image = null;
+	try {
+		const res = await fetchWithTimeout(`${found.base}/api/thumbnail/capabilities`, 8000, { method: 'GET' });
+		if (res.ok) image = await res.json();
+	} catch (e) { /* leave null */ }
+	const llm = (found.health && found.health.llm) || null;
+	return { connected: true, endpoint: found.base, llm, image, textModel: LOCAL_TEXT_MODEL, imageModel: LOCAL_IMAGE_MODEL };
+}
+
 async function checkNeuroBrainHealth(customUrl) {
 	const settings = await getSettings();
 	const found = await resolveNeuroBase(customUrl !== undefined ? customUrl : settings.neuroBrainUrl);
@@ -387,7 +325,7 @@ async function checkNeuroBrainHealth(customUrl) {
 }
 
 // Queries NeuroBrain OS (CORTEX-5) /api/analyze (with fallback to /api/knowledge/search)
-// for the current video so Gemini's packaging suggestions are grounded in the
+// for the current video so the local model's packaging suggestions are grounded in the
 // 0-5s neural timeline, Gatekeeper/Multiplier metrics, 4 Hijack Triggers,
 // 5-Second Formula rewrite, and Society for Neuroscience 'Brain Facts' PDF.
 async function fetchNeuroBrainForVideo(ctx, thumbnail) {
@@ -577,7 +515,7 @@ async function runNeuroExternalSearch(query, regionId = null, limit = 4) {
 }
 
 // Formats the NeuroBrain OS (CORTEX-5) simulation report into a structured
-// grounding block for Gemini's optimization prompt.
+// grounding block for the optimization prompt.
 function buildNeuroBrainBlock(neuro) {
 	if (!neuro || typeof neuro !== 'object') return '';
 	const lines = [];
@@ -657,80 +595,6 @@ function buildNeuroBrainBlock(neuro) {
 	}
 
 	return lines.join('\n');
-}
-
-/* ============================ Gemini Files API ============================ */
-// Resumable upload. The panel slices the file and streams base64 chunks here;
-// the service worker forwards raw bytes so the browser handles CORS/headers.
-
-async function uploadStart({ fileName, size, mimeType }) {
-	const apiKey = await requireKey();
-	const res = await fetchWithTimeout(`${API_BASE}/upload/v1beta/files`, 30000, {
-		method: 'POST',
-		headers: authHeaders(apiKey, {
-			'X-Goog-Upload-Protocol': 'resumable',
-			'X-Goog-Upload-Command': 'start',
-			'X-Goog-Upload-Header-Content-Length': String(size),
-			'X-Goog-Upload-Header-Content-Type': mimeType || 'video/mp4',
-			'Content-Type': 'application/json'
-		}),
-		body: JSON.stringify({ file: { display_name: (fileName || 'video').slice(0, 120) } })
-	});
-	if (!res.ok) throw new Error(await apiErrorMessage(res, 'Could not start the upload'));
-	const uploadUrl = res.headers.get('x-goog-upload-url');
-	if (!uploadUrl) throw new Error('Gemini did not return an upload URL.');
-	return { uploadUrl };
-}
-
-async function uploadChunk({ uploadUrl, offset, data, last }) {
-	if (!uploadUrl) throw new Error('Missing upload URL.');
-	const bytes = await base64ToBytes(data || '');
-	const res = await fetchWithTimeout(uploadUrl, 180000, {
-		method: 'POST',
-		headers: {
-			'X-Goog-Upload-Offset': String(offset || 0),
-			'X-Goog-Upload-Command': last ? 'upload, finalize' : 'upload'
-		},
-		body: bytes
-	});
-	if (!res.ok) throw new Error(await apiErrorMessage(res, 'Upload failed'));
-	if (!last) return { ok: true };
-	// The resumable protocol reports whether the finalize actually landed.
-	const status = (res.headers.get('x-goog-upload-status') || '').toLowerCase();
-	if (status && status !== 'final') throw new Error(`Upload did not finalize (status "${status}"). Try again.`);
-	const body = await res.json();
-	return { file: normalizeFile(body.file) };
-}
-
-async function fileStatus(name) {
-	if (!name) throw new Error('Missing file name.');
-	const apiKey = await requireKey();
-	const res = await fetchWithTimeout(`${API_BASE}/v1beta/${name}`, 20000, { headers: authHeaders(apiKey) });
-	// Only a 404 means the file is gone. A 403 is a key or permission problem
-	// and must not make the panel throw away a perfectly good upload.
-	if (res.status === 404) return { file: null, missing: true };
-	if (!res.ok) throw new Error(await apiErrorMessage(res, 'Could not read file status'));
-	return { file: normalizeFile(await res.json()) };
-}
-
-async function fileDelete(name) {
-	if (!name) return { ok: true };
-	const apiKey = await requireKey();
-	await fetch(`${API_BASE}/v1beta/${name}`, { method: 'DELETE', headers: authHeaders(apiKey) }).catch(() => {});
-	return { ok: true };
-}
-
-function normalizeFile(f) {
-	if (!f) return null;
-	return {
-		name: f.name,
-		uri: f.uri,
-		mimeType: f.mimeType,
-		state: f.state,
-		sizeBytes: Number(f.sizeBytes || 0),
-		expirationTime: f.expirationTime || null,
-		displayName: f.displayName || ''
-	};
 }
 
 /* ============================ Thumbnail ============================ */
@@ -1031,15 +895,12 @@ ${JSON.stringify(RESPONSE_SCHEMA, null, 2)}`}`;
 
 async function analyze(p, setStep) {
 	const settings = await getSettings();
-	if (!settings.apiKey) {
-		return { error: 'No Gemini API key configured. Open Settings in the panel and add your key.' };
-	}
 
 	// Captions come only from the content script, which reads YouTube's own
 	// transcript panel; the timedtext endpoint answers extensions with an
 	// empty body, so there is no point downloading the watch page here.
 	const scraped = p.transcriptOverride;
-	const transcript = scraped && scraped.text
+	let transcript = scraped && scraped.text
 		? {
 			text: String(scraped.text).slice(0, TRANSCRIPT_MAX_CHARS),
 			durationSec: Number(scraped.durationSec) || 0,
@@ -1056,8 +917,30 @@ async function analyze(p, setStep) {
 	}
 
 	const script = typeof p.script === 'string' ? p.script.trim().slice(0, SCRIPT_MAX_CHARS) : '';
-	const videoFile = p.videoFile && p.videoFile.uri ? p.videoFile : null;
-	const wantUrl = Boolean(p.watchByUrl && p.videoId && !videoFile);
+
+	// "Watch by URL": NeuroBrain downloads the video itself (yt-dlp) and transcribes it locally with whisper.
+	// Used when YouTube's own captions were not available. Free, and works only for public videos.
+	let videoNote = '';
+	if (p.watchByUrl && p.videoId && !transcript) {
+		if (setStep) setStep('NeuroBrain is downloading and transcribing the video locally (free, ~1-3 min)…');
+		try {
+			const r = await neuroCall('/api/video/analyze', {
+				url: p.videoId, window_sec: 60, transcribe: true, full_transcript: true, use_llm: false, include_frames: false
+			}, 600000);
+			const tr = (r.data && r.data.transcript) || {};
+			const segs = Array.isArray(tr.segments) ? tr.segments : [];
+			const text = segs.length
+				? segs.map((sg) => `[${fmtTime(sg.start)}] ${sg.text}`).join('\n')
+				: String(tr.full_text || '');
+			if (text.trim()) {
+				const meta = (r.data && r.data.metadata) || {};
+				transcript = { text: text.slice(0, TRANSCRIPT_MAX_CHARS), durationSec: Number(meta.duration_sec) || 0, language: tr.language || '' };
+				videoNote = 'NeuroBrain transcribed the video locally, since YouTube captions were not available.';
+			}
+		} catch (e) {
+			videoNote = `NeuroBrain could not read this video by URL (${((e && e.message) || '').slice(0, 160)}). This result used the title and description only.`;
+		}
+	}
 
 	const base = {
 		...p,
@@ -1065,12 +948,13 @@ async function analyze(p, setStep) {
 		transcript: transcript ? transcript.text : '',
 		transcriptDuration: transcript ? transcript.durationSec : 0,
 		hasThumbnail: Boolean(thumbnail),
-		useSearch: settings.useSearch
+		useSearch: false,
+		videoSource: null
 	};
 
 	// Consult NeuroBrain OS (CORTEX-5) on gamingpc_rx (LAN or Tailscale) first so
 	// its 0-5s neural simulation, 4 hijack triggers, 5s hook rewrite, and
-	// Society for Neuroscience 'Brain Facts' citations ground the Gemini prompt.
+	// Society for Neuroscience 'Brain Facts' citations ground the prompt.
 	let neuroBrain = null;
 	// A mass update always consults NeuroBrain, whatever the panel toggle says.
 	if (settings.useNeuroBrain !== false || p.massUpdate) {
@@ -1083,215 +967,90 @@ async function analyze(p, setStep) {
 	}
 	base.neuroBrain = neuroBrain;
 
-	const run = async (videoSource) => {
-		if (setStep) {
-			const parts = [];
-			if (neuroBrain) parts.push('CORTEX-5 brain model');
-			if (script) parts.push('script');
-			if (videoSource === 'file') parts.push('video file');
-			else if (videoSource === 'url') parts.push('video by URL');
-			if (transcript) parts.push('transcript');
-			setStep(`Gemini (${settings.model}) is optimizing with ${parts.length ? parts.join(' + ') : 'metadata'}…`);
-		}
-		const ctx = { ...base, videoSource };
-		const gen = await generateOptimization(ctx, settings, thumbnail, videoFile);
+	if (setStep) {
+		const parts = [];
+		if (neuroBrain) parts.push('CORTEX-5 brain model');
+		if (script) parts.push('script');
+		if (transcript) parts.push('transcript');
+		if (thumbnail) parts.push('thumbnail');
+		setStep(`Local AI (free) is optimizing with ${parts.length ? parts.join(' + ') : 'metadata'}… this takes 1-3 minutes`);
+	}
+	try {
+		const gen = await generateOptimization(base, thumbnail);
+		const notes = [gen.note, videoNote].filter(Boolean).join(' ');
 		return {
 			success: true,
 			optimization: gen.optimization,
 			neuroBrain,
-			grounding: gen.grounding,
+			grounding: null,
 			usage: gen.usage,
-			note: gen.note,
+			note: notes || undefined,
 			sources: {
 				script: Boolean(script),
 				transcript: Boolean(transcript),
 				transcriptDuration: transcript ? transcript.durationSec : 0,
 				thumbnail: Boolean(thumbnail),
-				video: videoSource,
+				video: null,
 				neuroBrain: neuroBrain ? (neuroBrain._endpoint || true) : false
 			},
-			model: settings.model
+			model: gen.model || LOCAL_TEXT_MODEL
 		};
-	};
-
-	try {
-		return await run(videoFile ? 'file' : wantUrl ? 'url' : null);
 	} catch (error) {
 		console.error('JCVIQ: analysis failed:', error);
-		// Only a failure that points at the video itself (private, unlisted,
-		// unsupported URL) earns a second, video-less call. A bad key, a
-		// safety block or a timeout would just fail again and bill twice.
-		const videoProblem = wantUrl && /video|youtube|file_?uri|url|media|private|unlisted|not (?:supported|accessible|available|found)|permission/i.test(error.message || '');
-		if (videoProblem) {
-			try {
-				const res = await run(null);
-				res.note = 'Gemini could not watch this video by URL (it is probably private or unlisted). Upload the video file in Sources for full analysis. This result used the script/captions only.';
-				return res;
-			} catch (e2) {
-				return { error: e2.message };
-			}
-		}
 		return { error: error.message };
 	}
 }
 
-function buildGenerationConfig(settings, structured) {
-	const config = {
-		// Thinking tokens count against this limit, so leave the JSON room.
-		maxOutputTokens: 32768,
-		// Gemini 3 and 4 models expose thinking as a level and cannot switch it
-		// off; "low" keeps an interactive run fast and the user can raise it in
-		// Settings. (The old numeric thinkingBudget is a 2.5-era parameter and
-		// is rejected when combined with a level.)
-		thinkingConfig: { thinkingLevel: settings.thinkingLevel || DEFAULT_THINKING }
-	};
-	// temperature / topK / topP are deliberately left at the model defaults:
-	// the Gemini 3 guide warns that lowering temperature degrades output, and
-	// 3.8 Flash and 4 Argon treat the old sampling parameters as deprecated.
-	if (structured) {
-		config.responseMimeType = 'application/json';
-		config.responseSchema = RESPONSE_SCHEMA;
+// Gemini-style schema (type: 'OBJECT', 'STRING'...) -> standard JSON Schema for Ollama structured outputs.
+function toJsonSchema(node) {
+	if (Array.isArray(node)) return node.map(toJsonSchema);
+	if (!node || typeof node !== 'object') return node;
+	const out = {};
+	for (const [k, v] of Object.entries(node)) {
+		if (k === 'propertyOrdering' || k === 'nullable') continue;
+		out[k] = k === 'type' && typeof v === 'string' ? v.toLowerCase() : toJsonSchema(v);
 	}
-	return config;
+	return out;
 }
 
-// Gemini 3 and 4 models accept a response schema together with the Search
-// tool, so the structured request is the default for every model offered.
-// Should a model still reject that combination, fall back once to the older
-// prompt-described JSON + repair path (keeping search), then once more to a
-// schema without search. Only a 400 moves on to the next shape; anything
-// else is a real error and surfaces as-is.
-async function generateOptimization(ctx, settings, thumbnail, videoFile) {
-	const mediaParts = [];
-	if (thumbnail) {
-		mediaParts.push({ inlineData: { mimeType: thumbnail.mimeType, data: thumbnail.data } });
-	}
-	if (ctx.videoSource === 'file' && videoFile) {
-		mediaParts.push({ fileData: { mimeType: videoFile.mimeType || 'video/mp4', fileUri: videoFile.uri } });
-	} else if (ctx.videoSource === 'url' && ctx.videoId) {
-		mediaParts.push({ fileData: { fileUri: `https://www.youtube.com/watch?v=${ctx.videoId}` } });
-	}
+// One free local-model call through NeuroBrain (gemma4:12b on the RTX 5070, qwen3 4b on the RX as backup).
+// The schema goes in the prompt (so the model knows what each field means) and in the request (so Ollama
+// constrains the output to valid JSON of that shape).
+async function generateOptimization(ctx, thumbnail) {
+	const prompt = buildPrompt({ ...ctx, structured: false, useSearch: false });
+	const { data } = await neuroCall('/api/llm/generate', {
+		system: prompt.system,
+		prompt: prompt.user,
+		images: thumbnail && thumbnail.data ? [thumbnail.data] : [],
+		json_schema: toJsonSchema(RESPONSE_SCHEMA),
+		max_tokens: 8192,
+		temperature: 0.7
+	}, 900000);
 
-	const attempts = [{ structured: true, search: settings.useSearch }];
-	if (settings.useSearch) {
-		attempts.push({ structured: false, search: true });
-		attempts.push({
-			structured: true,
-			search: false,
-			note: 'Search grounding is not available for this model, so this run used the model\'s own knowledge of the niche.'
-		});
-	}
-
-	const timeout = ctx.videoSource ? 300000 : 150000;
-	const endpoint = `${API_BASE}/v1beta/models/${settings.model}:generateContent`;
-	let firstError = null;
-
-	for (let i = 0; i < attempts.length; i++) {
-		const attempt = attempts[i];
-		const prompt = buildPrompt({ ...ctx, structured: attempt.structured, useSearch: attempt.search });
-		const body = {
-			systemInstruction: { parts: [{ text: prompt.system }] },
-			contents: [{ role: 'user', parts: [{ text: prompt.user }, ...mediaParts] }],
-			generationConfig: buildGenerationConfig(settings, attempt.structured)
-		};
-		if (attempt.search) body.tools = [{ googleSearch: {} }];
-
-		const response = await fetchWithTimeout(endpoint, timeout, {
-			method: 'POST',
-			headers: authHeaders(settings.apiKey, { 'Content-Type': 'application/json' }),
-			body: JSON.stringify(body)
-		});
-
-		if (response.status === 400 && i < attempts.length - 1) {
-			const message = await apiErrorMessage(response, 'Gemini API error');
-			if (!firstError) firstError = message;
-			console.warn('JCVIQ: request shape rejected, trying the next one:', message);
-			continue;
-		}
-		if (!response.ok) {
-			const message = await apiErrorMessage(response, 'Gemini API error');
-			// A 400 on the last shape too means the first complaint was the
-			// real one (bad key, blocked prompt); any other status is its own.
-			throw new Error(response.status === 400 && firstError ? firstError : message);
-		}
-
-		const result = readOptimization(await response.json());
-		if (attempt.note) result.note = attempt.note;
-		return result;
-	}
-	throw new Error(firstError || 'Gemini API error');
-}
-
-// Pull the JSON, the search sources and the token counts out of a
-// generateContent response.
-function readOptimization(data) {
-	const candidate = data && data.candidates && data.candidates[0];
-	const parts = (candidate && candidate.content && candidate.content.parts) || [];
-	// With the Search tool the reply is often split across several parts
-	// (fence / body / fence), so join every text part. Skip thought parts in
-	// case a model ever includes them.
-	const content = parts
-		.filter((part) => part && !part.thought && typeof part.text === 'string')
-		.map((part) => part.text)
-		.join('');
-	const finishReason = candidate && candidate.finishReason;
-
-	if (!content) {
-		if (finishReason === 'SAFETY') throw new Error('Gemini blocked this response for safety reasons. Try a different video.');
-		if (data && data.promptFeedback && data.promptFeedback.blockReason) {
-			throw new Error(`Gemini blocked the request (${data.promptFeedback.blockReason}).`);
-		}
-		if (finishReason === 'MAX_TOKENS') throw new Error('Gemini spent the whole output budget thinking. Lower the thinking depth in Settings and run again.');
-		throw new Error('Empty response from Gemini. Please try again.');
-	}
-
+	const content = String((data && data.text) || '');
+	if (!content) throw new Error('The local model returned nothing. Try again.');
 	const optimization = parseOptimization(content);
 	if (!optimization) {
-		if (finishReason === 'MAX_TOKENS') throw new Error('The AI response was too long and got cut off. Please run the analysis again.');
-		throw new Error(`Could not read the AI response (malformed JSON, ${content.length} chars). Please run the analysis again.`);
+		throw new Error(`Could not read the local model's answer (malformed JSON, ${content.length} chars). Run the analysis again.`);
 	}
-	const result = { optimization, grounding: readGrounding(candidate), usage: readUsage(data) };
+	const usage = {
+		input: Number(data.prompt_eval_count || 0),
+		output: Number(data.eval_count || 0),
+		thoughts: 0,
+		seconds: data.seconds || 0
+	};
+	const result = { optimization, usage, model: `${data.model} on ${data.host} (free)` };
 
-	// The repair step can close off a response that was cut mid-object, which
-	// parses fine but is missing sections. Say so, and let the panel refuse to
-	// auto-apply it, instead of saving half a description to YouTube.
+	// A reply cut off at the token cap can still parse after repair but miss sections. Say so, and let the
+	// panel refuse to auto-apply it, instead of saving half a description to YouTube.
 	const missing = RESPONSE_SCHEMA.required.filter((key) => !(key in optimization));
-	if (finishReason === 'MAX_TOKENS' || missing.length) {
+	if (data.done_reason === 'length' || missing.length) {
 		optimization._truncated = true;
-		const thoughts = result.usage && result.usage.thoughts;
-		result.note = finishReason === 'MAX_TOKENS'
-			? `The response hit the output limit${thoughts ? ` (thinking used ${thoughts.toLocaleString()} tokens)` : ''}, so some sections are missing. Lower the thinking depth in Settings or run again. Nothing was applied automatically.`
+		result.note = data.done_reason === 'length'
+			? 'The local model hit its output limit, so some sections are missing. Run again. Nothing was applied automatically.'
 			: `The response came back incomplete (missing: ${missing.slice(0, 4).join(', ')}). Run the analysis again. Nothing was applied automatically.`;
 	}
 	return result;
-}
-
-// The pages Google Search grounding actually consulted. Shown under Research
-// insights so the creator can check the model's claims.
-function readGrounding(candidate) {
-	const g = candidate && candidate.groundingMetadata;
-	if (!g) return null;
-	const links = [];
-	const seen = new Set();
-	for (const chunk of g.groundingChunks || []) {
-		const web = chunk && chunk.web;
-		if (!web || typeof web.uri !== 'string' || !/^https?:\/\//i.test(web.uri) || seen.has(web.uri)) continue;
-		seen.add(web.uri);
-		links.push({ title: String(web.title || web.uri).slice(0, 120), uri: web.uri });
-		if (links.length >= 12) break;
-	}
-	const queries = Array.isArray(g.webSearchQueries) ? g.webSearchQueries.filter((q) => typeof q === 'string').slice(0, 12) : [];
-	return (links.length || queries.length) ? { links, queries } : null;
-}
-
-function readUsage(data) {
-	const u = data && data.usageMetadata;
-	if (!u) return null;
-	return {
-		input: Number(u.promptTokenCount || 0),
-		output: Number(u.candidatesTokenCount || 0),
-		thoughts: Number(u.thoughtsTokenCount || 0)
-	};
 }
 
 /* ============================ Thumbnail generation ============================ */
@@ -1400,60 +1159,22 @@ function buildThumbnailPrompt(p, aspect) {
 }
 
 async function generateThumbnail(p, setStep) {
-	const apiKey = await requireKey();
-	const model = await getImageModel();
 	const aspect = ASPECTS.has(p.aspect) ? p.aspect : '16:9';
-	if (setStep) setStep(`Generating ${aspect} neuro-optimized thumbnail with ${model}…`);
-
-	const parts = [{ text: buildThumbnailPrompt(p, aspect) }];
-	if (p.reference && p.reference.data) {
-		parts.push({ inlineData: { mimeType: p.reference.mimeType || 'image/jpeg', data: p.reference.data } });
-	}
-
-	const endpoint = `${API_BASE}/v1beta/models/${model}:generateContent`;
-	const call = (generationConfig) => fetchWithTimeout(endpoint, 180000, {
-		method: 'POST',
-		headers: authHeaders(apiKey, { 'Content-Type': 'application/json' }),
-		body: JSON.stringify(generationConfig ? { contents: [{ parts }], generationConfig } : { contents: [{ parts }] })
-	});
-
-	// Ask for the shape and size explicitly. If a model objects to the image
-	// options themselves, retry once without them (the prompt still states
-	// the shape). Any other 400 — bad key, blocked prompt — surfaces as-is.
-	const imageConfig = { aspectRatio: aspect };
-	if (IMAGE_2K_MODELS.has(model)) imageConfig.imageSize = '2K';
-	let response = await call({ responseModalities: ['IMAGE'], imageConfig });
-	if (response.status === 400) {
-		const message = await apiErrorMessage(response.clone(), 'Image generation failed');
-		if (/image_?config|image_?size|aspect_?ratio|response_?modalities/i.test(message)) {
-			console.warn('JCVIQ: image options rejected, retrying without them:', message);
-			response = await call(null);
-		}
-	}
-	if (!response.ok) throw new Error(await apiErrorMessage(response, 'Image generation failed'));
-
-	const data = await response.json();
-	const candidate = data && data.candidates && data.candidates[0];
-	const outParts = (candidate && candidate.content && candidate.content.parts) || [];
-	const image = outParts.find((part) => part && part.inlineData && part.inlineData.data);
-
-	if (!image) {
-		const note = outParts.map((part) => (part && part.text) || '').join(' ').trim();
-		if (candidate && candidate.finishReason === 'SAFETY') {
-			throw new Error('Gemini blocked this thumbnail for safety reasons. Soften the concept and try again.');
-		}
-		if (data && data.promptFeedback && data.promptFeedback.blockReason) {
-			throw new Error(`Gemini blocked the request (${data.promptFeedback.blockReason}).`);
-		}
-		throw new Error(note ? `Gemini returned text instead of an image: ${note.slice(0, 200)}` : 'Gemini returned no image. Try again.');
-	}
-
+	if (setStep) setStep(`Generating a ${aspect} thumbnail locally with ${LOCAL_IMAGE_MODEL} (about 30-60 s)…`);
+	const { data } = await neuroCall('/api/thumbnail/generate', {
+		brief: buildThumbnailPrompt(p, aspect),
+		aspect,
+		reference_base64: p.reference && p.reference.data ? p.reference.data : null
+	}, 400000);
+	if (!data || !data.image_base64) throw new Error('NeuroBrain returned no image. Try again.');
 	return {
 		success: true,
-		image: { mimeType: image.inlineData.mimeType || 'image/png', data: image.inlineData.data },
+		image: { mimeType: data.mime || 'image/png', data: data.image_base64 },
 		aspect,
-		size: imageConfig.imageSize || '1K',
-		model
+		size: `${data.width}x${data.height}`,
+		model: `${LOCAL_IMAGE_MODEL}${data.prompt_writer ? ', prompt by ' + data.prompt_writer : ''}`,
+		promptUsed: data.prompt_used || '',
+		seconds: data.timings_sec ? data.timings_sec.total : null
 	};
 }
 

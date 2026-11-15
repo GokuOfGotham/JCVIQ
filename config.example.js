@@ -1,11 +1,8 @@
-// config.example.js - API Configuration template
+// config.example.js - optional configuration template
 //
-// Copy this file to `config.js` and paste in your own key.
-// `config.js` is gitignored and must never be committed.
-//
-// Get a Gemini API key at https://aistudio.google.com/apikey
+// JCVIQ needs no API key: it runs on free local models through NeuroBrain OS.
+// Copy this file to `config.js` (gitignored) only to pin a different NeuroBrain server.
 const CONFIG = {
-  GEMINI_API_KEY: 'YOUR_GEMINI_API_KEY_HERE',
   // Optional override for NeuroBrain OS (CORTEX-5); defaults automatically to
   // http://192.168.1.76:8765 (gamingpc_rx) with failover to Tailscale http://gamingpc-rx:8765
   NEUROBRAIN_API_URL: 'http://192.168.1.76:8765'
