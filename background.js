@@ -1,6 +1,6 @@
 // background.js - JCVIQ service worker.
 //  - Talks to the Gemini API (generateContent + Files API uploads).
-//  - Connects to NeuroBrain OS (CORTEX-5) on dell9010 (with automatic LAN and
+//  - Connects to NeuroBrain OS (CORTEX-5) on gamingpc_rx (with automatic LAN and
 //    Tailscale failover) to ground titles, hooks, thumbnails and strategy in
 //    0-5s computational neuroscience, the Society for Neuroscience 'Brain Facts'
 //    PDF (435 chunks + 136 glossary terms), and 5 live Open Neuroscience APIs.
@@ -23,16 +23,13 @@ importScripts('apimass.js');
 
 const API_BASE = 'https://generativelanguage.googleapis.com';
 
-// NeuroBrain OS (CORTEX-5) default failover endpoints: the 24/7 host dell9010
-// (Tailscale hostname, LAN IP, Tailscale IP), then the old dell3010 addresses
-// and local loopback.
+// NeuroBrain OS (CORTEX-5) default failover endpoints: the 24/7 host gamingpc_rx
+// (LAN IP first, then its Tailscale MagicDNS name for use outside the house),
+// then local loopback. dell9010 and dell3010 were retired on 2026-11-15.
 const NEUROBRAIN_ENDPOINTS = [
-	'http://dell9010:8765',
-	'http://192.168.1.167:8765',
-	'http://100.111.217.35:8765',
-	'http://dell3010:8765',
-	'http://192.168.1.208:8765',
-	'http://100.75.229.66:8765',
+	'http://192.168.1.76:8765',
+	'http://gamingpc-rx:8765',
+	'http://100.73.1.112:8765',
 	'http://127.0.0.1:8765'
 ];
 let cachedNeuroBase = null;
@@ -305,9 +302,9 @@ async function base64ToBytes(b64) {
 }
 
 /* ============================ NeuroBrain OS (CORTEX-5) ============================ */
-// Pluggable network client for NeuroBrain OS (CORTEX-5) running 24/7 on dell9010
-// with automatic failover across http://dell9010:8765, http://192.168.1.167:8765,
-// http://100.111.217.35:8765, and http://127.0.0.1:8765.
+// Pluggable network client for NeuroBrain OS (CORTEX-5) running 24/7 on gamingpc_rx
+// with automatic failover across http://192.168.1.76:8765 (LAN),
+// http://gamingpc-rx:8765 (Tailscale) and http://127.0.0.1:8765.
 
 function getNeuroEndpoints(customUrl) {
 	const list = [];
@@ -462,7 +459,7 @@ async function runNeuroHookScore(payload, setStep) {
 		}
 	});
 	if (!res || !res.data) {
-		return { error: 'Could not reach NeuroBrain OS (CORTEX-5) on dell9010:8765 (or failover IPs). Check that the NeuroBrainOS task is running on dell9010.' };
+		return { error: 'Could not reach NeuroBrain OS (CORTEX-5) on gamingpc_rx (192.168.1.76:8765 or Tailscale gamingpc-rx:8765). Check that the NeuroBrainOS task is running on gamingpc_rx.' };
 	}
 	if (res.data.error) return { error: String(res.data.error) };
 	return { success: true, report: res.data, endpoint: res.endpoint };
@@ -483,7 +480,7 @@ async function runNeuroAdvise(payload, setStep) {
 		}
 	});
 	if (!res || !res.data) {
-		return { error: 'Could not reach NeuroBrain OS (CORTEX-5) on dell9010:8765 (or failover IPs). Check that the NeuroBrainOS task is running on dell9010.' };
+		return { error: 'Could not reach NeuroBrain OS (CORTEX-5) on gamingpc_rx (192.168.1.76:8765 or Tailscale gamingpc-rx:8765). Check that the NeuroBrainOS task is running on gamingpc_rx.' };
 	}
 	if (res.data.error) return { error: String(res.data.error) };
 	return { success: true, advice: res.data, endpoint: res.endpoint };
@@ -498,7 +495,7 @@ async function runNeuroKnowledgeSearch(query, topK = 6) {
 		body: { query: q, top_k: Number(topK) || 6 }
 	});
 	if (!res || !res.data) {
-		return { error: 'Could not reach NeuroBrain OS (CORTEX-5) on dell9010:8765.' };
+		return { error: 'Could not reach NeuroBrain OS (CORTEX-5) on gamingpc_rx (192.168.1.76:8765 or gamingpc-rx:8765).' };
 	}
 	return { success: true, results: res.data, endpoint: res.endpoint };
 }
@@ -1071,13 +1068,13 @@ async function analyze(p, setStep) {
 		useSearch: settings.useSearch
 	};
 
-	// Consult NeuroBrain OS (CORTEX-5) on dell9010 (or failover IPs) first so
+	// Consult NeuroBrain OS (CORTEX-5) on gamingpc_rx (LAN or Tailscale) first so
 	// its 0-5s neural simulation, 4 hijack triggers, 5s hook rewrite, and
 	// Society for Neuroscience 'Brain Facts' citations ground the Gemini prompt.
 	let neuroBrain = null;
 	// A mass update always consults NeuroBrain, whatever the panel toggle says.
 	if (settings.useNeuroBrain !== false || p.massUpdate) {
-		if (setStep) setStep('Consulting NeuroBrain OS (CORTEX-5) 0–5s brain model on dell9010…');
+		if (setStep) setStep('Consulting NeuroBrain OS (CORTEX-5) 0–5s brain model on gamingpc_rx…');
 		try {
 			neuroBrain = await fetchNeuroBrainForVideo(base, thumbnail);
 		} catch (e) {

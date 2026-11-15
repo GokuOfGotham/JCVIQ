@@ -1081,14 +1081,14 @@ function renderSources() {
 	{
 		const nh = S.neuroHealth || {};
 		const enabled = S.settings.useNeuroBrain !== false;
-		let status = 'Checking dell9010:8765…';
+		let status = 'Checking gamingpc_rx:8765…';
 		let tone = '';
 		if (!enabled) {
 			status = 'Disabled in Settings';
 			tone = 'muted';
 		} else if (nh.connected) {
 			const kb = (nh.health && nh.health.knowledge_base) || {};
-			status = `Ready · ${nh.endpoint || 'dell9010:8765'}${kb.total_chunks ? ` · ${kb.total_chunks} Brain Facts chunks` : ''}`;
+			status = `Ready · ${nh.endpoint || '192.168.1.76:8765'}${kb.total_chunks ? ` · ${kb.total_chunks} Brain Facts chunks` : ''}`;
 			tone = 'on';
 		} else {
 			status = 'Standby — built-in CORTEX-5 0–5s brain rules active';
@@ -2198,7 +2198,7 @@ async function refreshNeuroHealth(notify = false, customUrl = undefined) {
 			const kb = (S.neuroHealth.health && S.neuroHealth.health.knowledge_base) || {};
 			toast(`Connected to NeuroBrain OS (CORTEX-5) at ${S.neuroHealth.endpoint}${kb.total_chunks ? ` (${kb.total_chunks} Brain Facts chunks)` : ''}.`, 'ok', 4500);
 		} else {
-			toast('Could not reach dell9010:8765 (or failover IPs). Using built-in CORTEX-5 0–5s brain framework.', 'warn', 5000);
+			toast('Could not reach gamingpc_rx (192.168.1.76:8765 or gamingpc-rx:8765). Using built-in CORTEX-5 0–5s brain framework.', 'warn', 5000);
 		}
 	}
 }
@@ -2214,7 +2214,7 @@ function updateNeuroHeaderBadge() {
 		? 'NeuroBrain OS (CORTEX-5) disabled in Settings'
 		: connected
 			? `NeuroBrain OS (CORTEX-5) active · ${S.neuroHealth.endpoint}`
-			: 'NeuroBrain OS (CORTEX-5) · built-in 0–5s framework (dell9010 offline)';
+			: 'NeuroBrain OS (CORTEX-5) · built-in 0–5s framework (gamingpc_rx offline)';
 }
 
 function renderBrain() {
@@ -2228,24 +2228,24 @@ function renderBrain() {
 	const statusBadge = !enabled
 		? badge('Disabled', 'bad')
 		: nh.connected
-			? badge(`Online · ${(nh.endpoint || 'dell9010:8765').replace(/^https?:\/\//, '')}`, 'ok')
+			? badge(`Online · ${(nh.endpoint || '192.168.1.76:8765').replace(/^https?:\/\//, '')}`, 'ok')
 			: badge('Standby · Built-in rules', 'warn');
 
 	const srv = card('NeuroBrain OS (CORTEX-5)', 'brain', {
 		actions: [
 			statusBadge,
-			iconButton('refresh', 'Test connection to dell9010:8765', () => refreshNeuroHealth(true))
+			iconButton('refresh', 'Test connection to gamingpc_rx:8765', () => refreshNeuroHealth(true))
 		]
 	});
 	const kb = (nh.health && nh.health.knowledge_base) || {};
 	srv.append(paragraph(
 		nh.connected
-			? `Connected to ${nh.endpoint} (${(nh.health && nh.health.host) || 'dell9010'}). Grounding titles, 0–5s hooks, thumbnails and retention strategy in Society for Neuroscience 'Brain Facts' (${kb.total_pages || 94} pages · ${kb.total_chunks || 435} chunks · ${kb.total_glossary_terms || 136} glossary terms) + 5 live Open Neuroscience APIs.`
-			: 'Automatic failover across http://dell9010:8765, http://192.168.1.167:8765 and http://100.111.217.35:8765. Built-in CORTEX-5 0–5s visual emotion rules remain active even when off-network.',
+			? `Connected to ${nh.endpoint} (${(nh.health && nh.health.host) || 'gamingpc_rx'}). Grounding titles, 0–5s hooks, thumbnails and retention strategy in Society for Neuroscience 'Brain Facts' (${kb.total_pages || 94} pages · ${kb.total_chunks || 435} chunks · ${kb.total_glossary_terms || 136} glossary terms) + 5 live Open Neuroscience APIs.`
+			: 'Automatic failover across http://192.168.1.76:8765 (LAN) and http://gamingpc-rx:8765 (Tailscale). Built-in CORTEX-5 0–5s visual emotion rules remain active even when off-network.',
 		'jc-hint'
 	));
 	const linkRow = el('div', 'jc-actions');
-	const dashUrl = nh.endpoint || 'http://dell9010:8765';
+	const dashUrl = nh.endpoint || 'http://192.168.1.76:8765';
 	const openDash = button('Open CORTEX-5 Dashboard', {
 		small: true,
 		onClick: () => window.open(dashUrl, '_blank', 'noopener')
@@ -2470,7 +2470,7 @@ function renderNeuroReportCards(container, nb) {
 function buildNeuroHookLabCard() {
 	const lab = S.neuroHookLab;
 	const c = card('Fast 0–5s Hook & Title Scorer', 'bolt');
-	c.append(el('div', 'jc-hint', 'Evaluate any candidate title, opening 5s hook or visual concept via POST /api/hook-score on dell9010.'));
+	c.append(el('div', 'jc-hint', 'Evaluate any candidate title, opening 5s hook or visual concept via POST /api/hook-score on gamingpc_rx.'));
 
 	const ta = el('textarea');
 	ta.rows = 3;
@@ -3021,9 +3021,9 @@ function renderSettings() {
 
 	const neuroUrl = el('input');
 	neuroUrl.type = 'text';
-	neuroUrl.placeholder = 'http://dell9010:8765 (auto-failover to 192.168.1.208 & 100.75.229.66)';
+	neuroUrl.placeholder = 'http://192.168.1.76:8765 (auto-failover to Tailscale gamingpc-rx)';
 	neuroUrl.value = s.neuroBrainUrl || '';
-	neuroCard.append(field('NeuroBrain Server URL (optional override)', neuroUrl, 'Defaults automatically to http://dell9010:8765 with LAN (192.168.1.167:8765) and Tailscale (100.111.217.35:8765) failover.'));
+	neuroCard.append(field('NeuroBrain Server URL (optional override)', neuroUrl, 'Defaults automatically to http://192.168.1.76:8765 (gamingpc_rx on the LAN) with Tailscale failover (http://gamingpc-rx:8765).'));
 	const testRow = el('div', 'jc-actions');
 	testRow.append(button('Test NeuroBrain connection', {
 		small: true, icon: 'refresh',
