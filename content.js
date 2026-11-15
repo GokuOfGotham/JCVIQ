@@ -2810,7 +2810,7 @@ function renderSettings() {
 
 	// Local AI (free): no API key, no Google. Everything runs through NeuroBrain on your own GPUs.
 	const api = card('Local AI (free)', 'settings');
-	api.append(el('div', 'jc-hint', 'JCVIQ uses no Google or Gemini API and costs nothing to run. Titles, descriptions and tags come from gemma4:12b on GAMINGPC-G451 (RTX 5070), with qwen3 4b on gamingpc_rx as backup; thumbnails are rendered by Z-Image Turbo in ComfyUI. All of it is reached through NeuroBrain OS below.'));
+	api.append(el('div', 'jc-hint', 'JCVIQ uses no Google or Gemini API and costs nothing to run. Titles, descriptions and tags come from gemma4:12b on GAMINGPC-G451 (RTX 5070), with qwen3 4b on gamingpc_rx as backup; thumbnails are rendered by Z-Image Turbo on the RTX 5070 (ComfyUI) or, when that PC is off, on gamingpc_rx itself. All of it is reached through NeuroBrain OS below.'));
 	const localInfo = el('div', 'jc-hint', 'Checking the local models…');
 	api.append(localInfo);
 	send({ action: 'localStatus' }).then((st) => {
@@ -2818,7 +2818,7 @@ function renderSettings() {
 		if (!st.connected) { localInfo.textContent = 'NeuroBrain is not reachable, so the local models cannot be used. Check the server URL below (use Tailscale when away from home).'; return; }
 		const hosts = (st.llm && Array.isArray(st.llm.hosts)) ? st.llm.hosts.filter((h) => h.up).length : 0;
 		const img = st.image || {};
-		localInfo.textContent = `Text: ${hosts} model host${hosts === 1 ? '' : 's'} up. Thumbnails: ${img.reachable ? 'ComfyUI ready on ' + (img.gpu || 'the RTX 5070') : 'ComfyUI not reachable (' + (img.error || 'start ComfyUI on GAMINGPC-G451') + ')'}. Cost: $0.`;
+		localInfo.textContent = `Text: ${hosts} model host${hosts === 1 ? '' : 's'} up. Thumbnails: ${img.reachable ? 'ready on ' + (img.gpu || 'a local GPU') + (img.seconds_per_image ? ' (~' + img.seconds_per_image + ' s each)' : '') : 'no image backend (' + (img.error || 'check NeuroBrain') + ')'}. Cost: $0.`;
 	});
 	v.append(api);
 

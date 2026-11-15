@@ -1160,7 +1160,7 @@ function buildThumbnailPrompt(p, aspect) {
 
 async function generateThumbnail(p, setStep) {
 	const aspect = ASPECTS.has(p.aspect) ? p.aspect : '16:9';
-	if (setStep) setStep(`Generating a ${aspect} thumbnail locally with ${LOCAL_IMAGE_MODEL} (about 30-60 s)…`);
+	if (setStep) setStep(`Generating a ${aspect} thumbnail locally with ${LOCAL_IMAGE_MODEL} (about 15 s on the RTX 5070 PC, 1.5-2 min on gamingpc_rx alone)…`);
 	const { data } = await neuroCall('/api/thumbnail/generate', {
 		brief: buildThumbnailPrompt(p, aspect),
 		aspect,
@@ -1172,7 +1172,7 @@ async function generateThumbnail(p, setStep) {
 		image: { mimeType: data.mime || 'image/png', data: data.image_base64 },
 		aspect,
 		size: `${data.width}x${data.height}`,
-		model: `${LOCAL_IMAGE_MODEL}${data.prompt_writer ? ', prompt by ' + data.prompt_writer : ''}`,
+		model: `${data.model || LOCAL_IMAGE_MODEL}${data.prompt_writer ? ', prompt by ' + data.prompt_writer : ''}`,
 		promptUsed: data.prompt_used || '',
 		seconds: data.timings_sec ? data.timings_sec.total : null
 	};
