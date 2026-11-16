@@ -2810,7 +2810,7 @@ function renderSettings() {
 
 	// Local AI (free): no API key, no Google. Everything runs through NeuroBrain on your own GPUs.
 	const api = card('Local AI (free)', 'settings');
-	api.append(el('div', 'jc-hint', 'JCVIQ uses no Google or Gemini API and costs nothing to run. Titles, descriptions and tags come from gemma4:12b on GAMINGPC-G451 (RTX 5070), with qwen3 4b on gamingpc_rx as backup; thumbnails are rendered by Z-Image Turbo on the RTX 5070 (ComfyUI) or, when that PC is off, on gamingpc_rx itself. All of it is reached through NeuroBrain OS below.'));
+	api.append(el('div', 'jc-hint', 'JCVIQ uses no Google or Gemini API and costs nothing to run. Titles, descriptions and tags come from qwen3 4b, and thumbnails from Z-Image Turbo, both on gamingpc_rx\'s own GPU through NeuroBrain OS below. No other PC is used.'));
 	const localInfo = el('div', 'jc-hint', 'Checking the local models…');
 	api.append(localInfo);
 	send({ action: 'localStatus' }).then((st) => {

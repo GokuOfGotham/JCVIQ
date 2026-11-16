@@ -1,7 +1,7 @@
 // background.js - JCVIQ service worker.
-//  - 100% free local AI, no Google / Gemini API: every text and image call goes to NeuroBrain OS, which runs
-//    gemma4:12b (text, vision) on GAMINGPC-G451's RTX 5070 with qwen3 4b on gamingpc_rx as backup, and renders
-//    thumbnails with Z-Image Turbo in ComfyUI. Cost per run: $0.
+//  - 100% free local AI, no Google / Gemini API: every text and image call goes to NeuroBrain OS on gamingpc_rx,
+//    which runs qwen3 4b (text, vision) and renders thumbnails with Z-Image Turbo on its own RX 5700 XT.
+//    No other PC is used (the RTX 5070 PC stays free for game design). Cost per run: $0.
 //  - Connects to NeuroBrain OS (CORTEX-5) on gamingpc_rx (with automatic LAN and
 //    Tailscale failover) to ground titles, hooks, thumbnails and strategy in
 //    0-5s computational neuroscience, the Society for Neuroscience 'Brain Facts'
@@ -34,14 +34,15 @@ const NEUROBRAIN_ENDPOINTS = [
 let cachedNeuroBase = null;
 
 // Free local models (served by NeuroBrain OS). Shown in Settings and on results.
-const LOCAL_TEXT_MODEL = 'gemma4:12b (local, free)';
+const LOCAL_TEXT_MODEL = 'qwen3 4b on gamingpc_rx (local, free)';
 const LOCAL_IMAGE_MODEL = 'Z-Image Turbo (local, free)';
 // YouTube only ever renders a thumbnail in one of these two shapes.
 const ASPECTS = new Set(['16:9', '9:16']);
 
-// Local models have smaller context windows than Gemini had; these keep a run inside gemma4's 32k window.
-const TRANSCRIPT_MAX_CHARS = 40000;
-const SCRIPT_MAX_CHARS = 50000;
+// gamingpc_rx's model runs with a 16k-token window: ~3k for instructions, up to 6k for the answer, the rest for
+// the sources. ~3.2 characters per token, so these keep a run with both a script and a transcript inside it.
+const TRANSCRIPT_MAX_CHARS = 14000;
+const SCRIPT_MAX_CHARS = 16000;
 
 /* ============================ Message routing ============================ */
 
@@ -1013,7 +1014,7 @@ function toJsonSchema(node) {
 	return out;
 }
 
-// One free local-model call through NeuroBrain (gemma4:12b on the RTX 5070, qwen3 4b on the RX as backup).
+// One free local-model call through NeuroBrain (qwen3 4b on gamingpc_rx's own GPU).
 // The schema goes in the prompt (so the model knows what each field means) and in the request (so Ollama
 // constrains the output to valid JSON of that shape).
 async function generateOptimization(ctx, thumbnail) {
@@ -1023,7 +1024,7 @@ async function generateOptimization(ctx, thumbnail) {
 		prompt: prompt.user,
 		images: thumbnail && thumbnail.data ? [thumbnail.data] : [],
 		json_schema: toJsonSchema(RESPONSE_SCHEMA),
-		max_tokens: 8192,
+		max_tokens: 6144,
 		temperature: 0.7
 	}, 900000);
 
@@ -1160,7 +1161,7 @@ function buildThumbnailPrompt(p, aspect) {
 
 async function generateThumbnail(p, setStep) {
 	const aspect = ASPECTS.has(p.aspect) ? p.aspect : '16:9';
-	if (setStep) setStep(`Generating a ${aspect} thumbnail locally with ${LOCAL_IMAGE_MODEL} (about 15 s on the RTX 5070 PC, 1.5-2 min on gamingpc_rx alone)…`);
+	if (setStep) setStep(`Generating a ${aspect} thumbnail locally with ${LOCAL_IMAGE_MODEL} (about 1.5-2 min on gamingpc_rx)…`);
 	const { data } = await neuroCall('/api/thumbnail/generate', {
 		brief: buildThumbnailPrompt(p, aspect),
 		aspect,

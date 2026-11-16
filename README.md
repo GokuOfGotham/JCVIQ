@@ -2,7 +2,7 @@
 
 A Chrome extension that puts a free, local-AI optimization panel inside YouTube and YouTube Studio. It reads what your video actually contains — your script, captions (or a local whisper transcript) and the thumbnail — then generates packaging you can apply with one click.
 
-**No Google or Gemini API, no API key, $0 per run.** Every model runs on your own GPUs through NeuroBrain OS: titles, descriptions, tags and chapters come from gemma4:12b on GAMINGPC-G451 (RTX 5070, with qwen3 4b on gamingpc_rx as backup), and thumbnails are rendered by Z-Image Turbo in ComfyUI. JCVIQ needs NeuroBrain reachable (LAN, or Tailscale when away from home).
+**No Google or Gemini API, no API key, $0 per run.** Every model runs on gamingpc_rx's own GPU (RX 5700 XT) through NeuroBrain OS: titles, descriptions, tags and chapters come from qwen3 4b, and thumbnails are rendered by Z-Image Turbo with stable-diffusion.cpp. No other PC is involved, so the RTX 5070 PC stays free for game design. JCVIQ needs NeuroBrain reachable (LAN, or Tailscale when away from home).
 
 No popup. The panel mounts into the page: docked in the right column on a watch page, and as a right-hand drawer in Studio. The toolbar icon shows or hides it.
 
@@ -74,7 +74,7 @@ Generating a 16:9 image for a Short puts the subject behind the like and comment
 
 Results can be downloaded, regenerated, or in Studio pushed straight into the thumbnail upload field. Z-Image Turbo renders short overlay text well, but check it before you publish.
 
-Thumbnails are rendered locally and free: NeuroBrain's `/api/thumbnail/generate` has gemma4:12b condense the long brief (and the reference frame, when captured) into one concrete image prompt, then Z-Image Turbo renders it in ComfyUI on the RTX 5070 at 1280×720 (16:9) or 720×1280 (9:16), in about 30-60 seconds. ComfyUI must be running on GAMINGPC-G451 and listening on the network.
+Thumbnails are rendered locally and free: NeuroBrain's `/api/thumbnail/generate` has qwen3 4b condense the long brief (and the reference frame, when captured) into one concrete image prompt, then Z-Image Turbo (Q5 GGUF, stable-diffusion.cpp on Vulkan) renders it on gamingpc_rx's RX 5700 XT at 1280×720 (16:9) or 720×1280 (9:16), in about 1.5-2 minutes.
 
 ---
 
@@ -106,12 +106,11 @@ On a watch page nothing can be applied, so everything is copy-to-clipboard. That
 
 | Job | Model | Where it runs |
 |---|---|---|
-| Titles, description, tags, chapters, strategy | gemma4:12b (vision; scores the thumbnail too) | GAMINGPC-G451, RTX 5070, via Ollama |
-| Backup when the 5070 PC is off | qwen3:4b-instruct / qwen3-vl:4b-instruct | gamingpc_rx, RX 5700 XT, via Ollama |
-| Thumbnails | Z-Image Turbo (prompt written by gemma4:12b) | GAMINGPC-G451, RTX 5070, via ComfyUI |
+| Titles, description, tags, chapters, strategy | qwen3:4b-instruct (qwen3-vl:4b-instruct when the thumbnail is attached) | gamingpc_rx, RX 5700 XT, via Ollama |
+| Thumbnails | Z-Image Turbo Q5 (prompt written by qwen3 4b) | gamingpc_rx, RX 5700 XT, via stable-diffusion.cpp |
 | Transcription by URL | faster-whisper | gamingpc_rx CPU |
 
-The extension sends one request per job to NeuroBrain OS (`/api/llm/generate`, `/api/thumbnail/generate`, `/api/video/analyze`). The JSON shape is enforced with Ollama structured outputs, so the reply always parses. There is no Google Search grounding: the "research insights" come from the model's own knowledge and NeuroBrain's knowledge bases. Runs take 1-3 minutes instead of Gemini's 20-60 seconds; the cost is $0.
+The extension sends one request per job to NeuroBrain OS (`/api/llm/generate`, `/api/thumbnail/generate`, `/api/video/analyze`). The JSON shape is enforced with Ollama structured outputs, so the reply always parses. There is no Google Search grounding: the "research insights" come from the model's own knowledge and NeuroBrain's knowledge bases. Runs take 1-2 minutes instead of Gemini's 20-60 seconds; the cost is $0. Long transcripts and scripts are trimmed (14,000 and 16,000 characters) to fit the local model's 16k-token window.
 
 ### Long requests and Chrome's service worker
 
@@ -189,8 +188,8 @@ The prompt marks the script, transcript and page metadata as untrusted data and 
 | Panel doesn't appear | Confirm the extension is enabled at `chrome://extensions/` and refresh. In Studio it mounts on edit pages and the video list. |
 | "NeuroBrain OS is not reachable" | gamingpc_rx is off or you are away from home without Tailscale. Check Settings → Local AI. |
 | Results feel generic | Add the script. Fill in the channel profile. |
-| Thumbnail fails with "ComfyUI ... is not reachable" | Start ComfyUI on GAMINGPC-G451 (the "ComfyUI LAN" logon task does this). |
-| Analysis is slow | Normal for local models: 1-3 minutes, longer when the RTX 5070 PC is off and the RX backup answers. |
+| Thumbnail fails with "stable-diffusion.cpp ..." | Check `G:\AI\sdcpp` on gamingpc_rx (sd-cli.exe and the three model files). |
+| Analysis is slow | Normal for the local model: about 1-2 minutes, and about 1.5-2 minutes per thumbnail. |
 | Chapters land on the wrong moments | Captions were unavailable, so timestamps came from the script alone. Turn on local transcription by URL. |
 | Analysis reports no captions | YouTube served its older transcript panel, which fails to load, or the video has none. Add the script. |
 | Tags get dropped | Expected. YouTube caps tags at 500 characters total. |

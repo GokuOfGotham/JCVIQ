@@ -14,11 +14,11 @@ Two steps, about two minutes. No API key: JCVIQ runs on free local models throug
 1. Open any YouTube video, or a video's edit page in YouTube Studio
 2. The **panel appears on the page** — there is no popup. The toolbar icon only shows or hides the panel.
 3. Click the **settings** icon in the panel header
-4. The **Local AI (free)** card should report the model hosts as up and ComfyUI as ready. If NeuroBrain is not reachable, gamingpc_rx is off, or you are away from home without Tailscale.
+4. The **Local AI (free)** card should report the model host as up and thumbnails as ready on the RX 5700 XT. If NeuroBrain is not reachable, gamingpc_rx is off, or you are away from home without Tailscale.
 
 While you are in Settings, fill in the channel profile: niche, audience, tone, words to avoid, your call to action. It goes into every prompt and noticeably improves results.
 
-Text runs on gemma4:12b on the RTX 5070 PC (qwen3 4b on gamingpc_rx when that PC is off); thumbnails on Z-Image Turbo in ComfyUI. A run takes 1-3 minutes and costs nothing.
+Text runs on qwen3 4b and thumbnails on Z-Image Turbo, both on gamingpc_rx's own GPU; no other PC is used. A run takes 1-2 minutes and costs nothing.
 
 ---
 
@@ -89,7 +89,7 @@ If you want every analysis to write into the form automatically, turn on **Auto-
 | No panel on the page | Check the extension is enabled at `chrome://extensions/`, then refresh |
 | "NeuroBrain OS is not reachable" | gamingpc_rx is off, or you are away from home without Tailscale |
 | Results feel generic | Add the script, and fill in the channel profile |
-| Thumbnail fails: ComfyUI not reachable | Start ComfyUI on GAMINGPC-G451 (the "ComfyUI LAN" logon task does it) |
+| Thumbnail fails | Check `G:\AI\sdcpp` on gamingpc_rx (sd-cli.exe and the three model files) |
 | "NeuroBrain could not read this video by URL" | The video is private or unlisted. Add the script instead. |
 | Tag count reads zero | Expand "Show more" on the Studio edit page so the tag chips render |
 | No captions were used | YouTube served a transcript panel that fails to load, or the video has none. Add the script. |
