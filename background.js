@@ -343,6 +343,9 @@ async function fetchNeuroBrainForVideo(ctx, thumbnail) {
 	if (ctx.description) {
 		parts.push(`Current Description Excerpt:\n${ctx.description.slice(0, 700)}`);
 	}
+	// Without this NeuroBrain writes thumbnail directions in a generic modern
+	// look even for biblical, Renaissance or ancient subjects.
+	parts.push('Period rule for any visual or thumbnail direction: the default is the present day with a modern photographic look. Only when the title, description or script itself is about a past era (it names a historical period, people, events or scripture) describe the visual inside that era and in its own art style, and do not mix past and present in one image. Never move a modern subject into a historical setting.');
 	const scenario = parts.join('\n\n').trim() || 'YouTube video packaging and 0-5s opening hook.';
 	const isShort = ctx.contentType === 'short' || (ctx.lengthSeconds > 0 && ctx.lengthSeconds <= 65);
 	const goal = isShort
@@ -691,6 +694,18 @@ const RESPONSE_SCHEMA = {
 				required: ['textOverlay', 'idea']
 			}
 		},
+		visualSetting: {
+			type: 'OBJECT',
+			properties: {
+				era: { type: 'STRING' },
+				place: { type: 'STRING' },
+				artStyle: { type: 'STRING' },
+				wardrobeAndProps: { type: 'STRING' },
+				avoid: { type: 'STRING' },
+				isHistorical: { type: 'BOOLEAN' }
+			},
+			required: ['era', 'artStyle', 'isHistorical']
+		},
 		chapters: {
 			type: 'ARRAY',
 			items: {
@@ -874,6 +889,7 @@ Guidelines:
 - Pinned comment: one engaging comment that asks a self-referential question (activating the viewer's Default Mode Network to drive replies).
 - Playlists: 2-4 playlist names.
 - Category: the single best YouTube category.
+- Visual setting (visualSetting): decide the ONE time period and world the video's SUBJECT belongs to, using ONLY what the script, transcript, title and description actually say. The default is "present day" with "cinematic photography" and isHistorical false: most videos (gaming, tech, sports, news, military, vlogs, tutorials, reviews, wildlife, self-improvement, business) are present day even when the topic is dramatic. Choose a past era ONLY when the source text itself is about that era — it names the period, historical people or events, or scripture; never invent one from mood or from these instructions. Fill "era" (e.g. "present day", "World War II, 1944", "Biblical antiquity, 1st century Judea"), "place", "artStyle" (present day -> cinematic photography; a historical subject -> the art tradition viewers associate with it, e.g. biblical and religious subjects -> Renaissance/Baroque old-master oil painting; ancient Rome or Greece -> classical marble or fresco; 20th-century history -> period archival photography), "wardrobeAndProps" (period clothing, architecture, objects, light sources), "avoid" (the anachronisms most likely to creep in), and "isHistorical" (true when the era is not the present day). When isHistorical is true, EVERY thumbnail concept "idea" must stay entirely inside that era and art style: no modern people, clothing, offices, technology, cities or photography, and no past-versus-present split screens, unless the video itself is explicitly a comparison with the modern world.
 - Hook: concrete 0–5s opening rewrite structured around CORTEX-5's 5-Second Formula: [0.0–1.5s Sensory Hook: immediate visual motion + visceral sound, zero fade-ins/logos] -> [1.5–3.0s Emotional Stake: who/what is vulnerable to fire Insula & Mirror Neurons] -> [3.0–5.0s Unanswered Question: open loop that locks the Prefrontal Cortex] (plus 5–30s bridge for long-form).
 - End screen & cards: what to promote and how to pitch it at the peak dopamine/LTP resolution moment.
 - Keyword/content strategy: primary + secondary keywords, neuro-structural retention advice (preventing the 5–8s Pure Hook drop-off, re-triggering Locus Coeruleus norepinephrine every 45–60s, and locking Hippocampal LTP memory), AND advice on niche consistency. ${ctx.useSearch ? 'Use your search tool to find recent videos in this exact niche that hit 250k-1M+ views, analyze their titles and hooks, make sure ours are designed to outperform them, and list the insights/competitors you found in "researchInsights".' : 'In "researchInsights", list the competitor patterns and neuro-behavioral audience angles you would expect to win in this niche.'}
@@ -978,6 +994,10 @@ async function analyze(p, setStep) {
 	}
 	try {
 		const gen = await generateOptimization(base, thumbnail);
+		if (gen.optimization) {
+			gen.optimization.visualSetting = checkVisualSetting(gen.optimization.visualSetting,
+				[p.title, p.description, script, transcript ? transcript.text.slice(0, 6000) : '']);
+		}
 		const notes = [gen.note, videoNote].filter(Boolean).join(' ');
 		return {
 			success: true,
@@ -1077,6 +1097,52 @@ const THEME_STOPWORDS = new Set(('a an the and or but nor of to in on at by for 
 	+ 'this that these those it its your you our my his her their how why what when where who which vs versus guide part episode ep '
 	+ 'official video full new best top ultimate complete').split(' '));
 
+// The small local model likes to lock a video into a past era (usually the
+// Renaissance, from the examples in its instructions) even when the video is
+// about the present day. Keep a historical lock only when the video's own
+// title, description, script or transcript backs it up; otherwise fall back to
+// the present day.
+const PRESENT_DAY_SETTING = {
+	era: 'Present day',
+	place: '',
+	artStyle: 'Cinematic photography',
+	wardrobeAndProps: '',
+	avoid: '',
+	isHistorical: false
+};
+
+const HISTORY_CUE_RE = new RegExp([
+	'\\b(?:1[0-8]\\d\\d|[1-9]\\d{0,2})\\s*(?:BC|BCE|AD|CE)\\b',
+	'\\b(?:\\d{1,2}(?:st|nd|rd|th)|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth)[ -]century\\b',
+	'\\bin (?:the year )?1[0-8]\\d\\d\\b',
+	'\\b(?:ancient|antiquity|medieval|middle ages|renaissance|baroque|victorian|edwardian|elizabethan|tudor|feudal|prehistoric|stone age|bronze age|iron age|dark ages)\\b',
+	'\\b(?:bible|biblical|scripture|scriptures|gospel|gospels|psalms?|proverbs|apostles?|disciples?|prophets?|pharaohs?|pharisees?|old testament|new testament|jesus|christ|moses|abraham|king david|solomon|nazareth|galilee|judea)\\b',
+	'\\b(?:roman empire|ancient rome|ancient greece|spartans?|byzantine|ottoman empire|mongols?|vikings?|samurai|shogun|crusades?|crusaders?|aztecs?|mayans?|incas?)\\b',
+	'\\b(?:machiavelli|machiavellian|sun tzu|art of war|marcus aurelius|seneca|epictetus|plato|socrates|aristotle|napoleon|julius caesar|alexander the great|genghis khan|cleopatra|confucius|medici)\\b',
+	'\\b(?:world war (?:i|ii|one|two|1|2)|ww1|ww2|wwi|wwii|american civil war|revolutionary war|napoleonic|history of|historical)\\b'
+].join('|'), 'i');
+
+const ERA_GENERIC_WORDS = new Set(('present modern contemporary century centuries period italy italian europe european '
+	+ 'courtyard night interior exterior style painting painted portrait photography cinematic setting world kingdom').split(' '));
+
+function checkVisualSetting(vs, texts) {
+	if (!vs || typeof vs !== 'object') return null;
+	const era = String(vs.era || '').trim();
+	const looksPresent = /present|modern|contemporary|today|21st|current/i.test(era);
+	const historical = vs.isHistorical === true || (Boolean(era) && !looksPresent && vs.isHistorical !== false);
+	if (!historical) return { ...vs, isHistorical: false };
+
+	const source = texts.filter(Boolean).map(String).join('\n');
+	if (!source.trim() || HISTORY_CUE_RE.test(source)) return { ...vs, isHistorical: true };
+	// Also accept the lock when a distinctive word from the era the model
+	// named (a period or dynasty, not a place, since a modern travel video can
+	// name an old city) actually appears in the video's own text.
+	const hay = source.toLowerCase();
+	const named = era.toLowerCase().match(/[a-z]{5,}/g) || [];
+	if (named.some((w) => !ERA_GENERIC_WORDS.has(w) && hay.includes(w))) return { ...vs, isHistorical: true };
+	return { ...PRESENT_DAY_SETTING, corrected: true };
+}
+
 // Eponymous adjectives and -isms (Machiavellian, Orwellian, Kafkaesque,
 // Darwinian, Stoicism...) carry a whole visual world in one word. The image
 // model tends to read them as a mere intensifier unless they are called out.
@@ -1122,8 +1188,30 @@ function buildThumbnailPrompt(p, aspect) {
 	}
 	if (signature.length) {
 		lines.push(`SIGNATURE REFERENCES (must not be ignored): ${signature.join(', ')}`);
-		lines.push('Each of these names a specific person, era, work or school of thought. Translate it into that reference\'s own recognisable iconography and give it a prominent place in the composition — e.g. "Machiavellian" means Niccolò Machiavelli and Renaissance Florence: a period portrait or marble bust of Machiavelli, a copy of "The Prince", Renaissance oil-painting light, chess-like schemes, a dagger behind the back, a velvet-and-gold court palette. Do NOT reduce it to a generic word like "ruthless" or "strategic". Blend the reference with the modern setting from the title when the title has one (e.g. Renaissance intrigue inside a modern boardroom).');
+		lines.push('If one of these names a specific person, work or school of thought (e.g. "Machiavellian", "Orwellian", "Stoicism"), show that reference\'s recognisable iconography prominently instead of reducing it to a generic mood word. If it is just a nationality or an ordinary word, treat it as a normal theme. Either way, the period and setting lock below decides the era and look of the image.');
 	}
+	lines.push('');
+
+	// One era per image. This outranks the concept text, because concepts and
+	// NeuroBrain directions written before this rule existed can still ask
+	// for modern or mixed-era scenes.
+	const vs = checkVisualSetting(p.visualSetting, [...titles, p.keyword, p.description, p.scriptExcerpt]);
+	const clip = (t, n) => String(t || '').trim().slice(0, n);
+	lines.push('PERIOD AND SETTING LOCK (binding — overrides the visual concept and the NeuroBrain direction wherever they conflict):');
+	if (vs && vs.era) {
+		lines.push(`ERA: ${clip(vs.era, 200)}`);
+		if (vs.place) lines.push(`PLACE: ${clip(vs.place, 200)}`);
+		if (vs.artStyle) lines.push(`ART STYLE: ${clip(vs.artStyle, 300)}`);
+		if (vs.wardrobeAndProps) lines.push(`WARDROBE, ARCHITECTURE AND PROPS: ${clip(vs.wardrobeAndProps, 400)}`);
+		if (vs.avoid) lines.push(`ANACHRONISMS TO KEEP OUT: ${clip(vs.avoid, 300)}`);
+	} else {
+		lines.push('ERA: present day. Use a modern, cinematic photographic look that matches the video\'s real subject.');
+	}
+	if (vs && vs.isHistorical) {
+		lines.push('If that era is not the present day, EVERYTHING visible must belong to it: faces and hairstyles, clothing, architecture, furniture, weapons, tools, materials, light sources (sun, fire, candle, oil lamp — never electric), and the rendering style itself (brushwork, pigment, canvas or stone — not a modern photograph or 3D render). No anachronisms at all: no suits, hoodies, jeans, glasses, wristwatches, phones, screens, cars, glass or concrete buildings, neon, city skylines, studio lighting or modern stock-photo people. Do NOT mix eras in one image and do NOT make a past-versus-present split screen. If the visual concept below asks for a modern element, replace it with the closest period equivalent that carries the same meaning. The text overlay, if any, is the only modern layer allowed.');
+	}
+	if (p.description) lines.push(`VIDEO DESCRIPTION (context for era and subject only): ${clip(p.description, 600)}`);
+	if (p.scriptExcerpt) lines.push(`SCRIPT EXCERPT (context for era and subject only): ${clip(p.scriptExcerpt, 900)}`);
 	lines.push('');
 
 	lines.push(ASPECT_RULES[aspect] || ASPECT_RULES['16:9']);
@@ -1146,10 +1234,10 @@ function buildThumbnailPrompt(p, aspect) {
 	}
 
 	if (p.reference) {
-		lines.push('\nA still frame from the actual video is attached. Use it to stay honest about what the video contains: reuse its real subject, setting, lighting and colour where they fit. If the frame is generic (a talking head, screen recording, slide or b-roll) it must NOT override the key themes and signature references above — use it only for palette and lighting, and build the scene around the title\'s theme. Improve framing, contrast and drama.');
+		lines.push('\nA still frame from the actual video is attached. Use it to stay honest about what the video contains: reuse its real subject, setting, lighting and colour where they fit. If the frame is generic (a talking head, screen recording, slide or b-roll) it must NOT override the key themes and signature references above — use it only for palette and lighting, and build the scene around the title\'s theme. If the period lock above is historical, ignore every modern element in the frame (presenter, room, clothing, equipment). Improve framing, contrast and drama.');
 	}
 
-	lines.push('\nSTYLE: bold saturated colour, strong directional light, high micro-contrast between the subject and the background, shallow depth of field. Cinematic and photographic by default; use a painterly, engraved or sculptural treatment where a historical or literary reference calls for it.');
+	lines.push('\nSTYLE: bold saturated colour, strong directional light, high micro-contrast between the subject and the background, shallow depth of field. The rendering medium follows the period lock: a present-day subject is cinematic and photographic; only a locked historical era is rendered in that era\'s own art style across the WHOLE image.');
 	lines.push('AVOID: cluttered composition, small distant subjects, flat even lighting, muddy dark shadows, collage layouts, borders or frames, stock-photo blandness, generic office stock imagery that ignores the title\'s theme, gibberish text.');
 	lines.push('ACCURACY: do not show a photoreal likeness of a living real person unless the reference frame shows them, and never fabricate an event the video does not contain. Historical figures and public-domain cultural references named or implied by the title (e.g. Machiavelli, Sun Tzu, Napoleon, Marcus Aurelius) ARE allowed and encouraged, shown in period style — portrait, bust, statue or engraving.');
 

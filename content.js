@@ -662,7 +662,7 @@ function suggestedMetadata(opt) {
 	if (!opt) return null;
 	return {
 		title: opt.titles && opt.titles.length ? opt.titles[0].title : '',
-		description: composeDescription(opt) + (chapterLines(opt, S.meta && S.meta.lengthSeconds) ? '\n\n' + chapterLines(opt, S.meta && S.meta.lengthSeconds) : ''),
+		description: descriptionWithChapters(opt),
 		tags: fitTagsToLimit(opt.tags || [])
 	};
 }
@@ -1047,14 +1047,14 @@ function renderSources() {
 	{
 		const nh = S.neuroHealth || {};
 		const enabled = S.settings.useNeuroBrain !== false;
-		let status = 'Checking gamingpc_rx:8765…';
+		let status = 'Checking gamingpc_rx (192.168.1.76:8765)…';
 		let tone = '';
 		if (!enabled) {
 			status = 'Disabled in Settings';
 			tone = 'muted';
 		} else if (nh.connected) {
 			const kb = (nh.health && nh.health.knowledge_base) || {};
-			status = `Ready · ${nh.endpoint || '192.168.1.76:8765'}${kb.total_chunks ? ` · ${kb.total_chunks} Brain Facts chunks` : ''}`;
+			status = `Ready · ${(nh.endpoint || '192.168.1.76:8765').replace(/^https?:\/\//, '')}${kb.total_chunks ? ` · ${kb.total_chunks} Brain Facts chunks` : ''}`;
 			tone = 'on';
 		} else {
 			status = 'Standby — built-in CORTEX-5 0–5s brain rules active';
@@ -1650,6 +1650,19 @@ function renderThumbnail() {
 		opt.thumbnailConcepts.forEach((_, i) => { if (S.generated[i]) renderGenerated(i); });
 	}
 
+	const vset = opt.visualSetting;
+	if (vset && vset.era) {
+		const pc = card('Period lock for generated images', null);
+		pc.append(paragraph(`${vset.era}${vset.place ? ' · ' + vset.place : ''}`, 'jc-summary'));
+		if (vset.artStyle) pc.append(paragraph(`Art style: ${vset.artStyle}`, 'jc-sug-reason'));
+		pc.append(el('div', 'jc-hint', vset.isHistorical
+			? 'Every generated image stays inside this era. Nothing modern is mixed in.'
+			: vset.corrected
+				? 'The AI suggested a historical era, but nothing in the title, description or script is about the past, so images use a modern photographic look.'
+				: 'Present-day subject, so images use a modern photographic look.'));
+		v.append(pc);
+	}
+
 	const nb = currentNeuro();
 	const neuroThumbPrompt = nb && nb.actionable_optimization && nb.actionable_optimization.visual_or_thumbnail_prompt;
 	if (neuroThumbPrompt) {
@@ -1778,6 +1791,11 @@ async function generateThumbnailFor(key, concept, btn) {
 		videoTitle: (S.result && S.result.titles && S.result.titles.length ? S.result.titles[0].title : '') || '',
 		keyword: currentKeyword(),
 		niche: profile.niche || '',
+		// Era and art style for the whole image, so a biblical or Renaissance
+		// subject is never drawn in a modern or mixed-era look.
+		visualSetting: (S.result && S.result.visualSetting) || null,
+		description: (S.meta && S.meta.description) || '',
+		scriptExcerpt: (S.sources.script.text || '').slice(0, 900),
 		reference
 	});
 
@@ -2362,6 +2380,8 @@ function buildNeuroHookLabCard() {
 		const r = lab.report;
 		const m = r.metrics || {};
 		const box = el('div', 'jc-neuro-box');
+		const hookCanned = cannedNotice(r);
+		if (hookCanned) box.append(hookCanned);
 		const rings = el('div', 'jc-rings');
 		if (typeof m.gatekeeper_0_3s_score === 'number') rings.append(ring(m.gatekeeper_0_3s_score, 'Gatekeeper (0–3s)'));
 		if (typeof m.multiplier_3s_plus_score === 'number') rings.append(ring(m.multiplier_3s_plus_score, 'Multiplier (3s+)'));
@@ -2438,6 +2458,8 @@ function buildNeuroAdvisorLabCard() {
 	if (lab.advice) {
 		const a = lab.advice;
 		const box = el('div', 'jc-neuro-box');
+		const adviceCanned = cannedNotice(a);
+		if (adviceCanned) box.append(adviceCanned);
 		if (a.headline) box.append(paragraph(a.headline, 'jc-summary'));
 		if (Array.isArray(a.primary_brain_circuits) && a.primary_brain_circuits.length) {
 			box.append(chips(a.primary_brain_circuits, { highlightFirst: true }));
@@ -2484,6 +2506,24 @@ function buildNeuroAdvisorLabCard() {
 		c.append(box);
 	}
 	return c;
+}
+
+// NeuroBrain answers with built-in generic text when no local model replies. That text looks like
+// a real answer, so say plainly when a result is canned and has not judged what was asked.
+function isCannedNeuro(res) {
+	if (!res || typeof res !== 'object') return false;
+	if (res.fallback === true || res.status === 'rules') return true;
+	return /^(deterministic|rules-only)/i.test(String(res._model_used || ''));
+}
+
+function cannedNotice(res) {
+	if (!isCannedNeuro(res)) return null;
+	const row = el('div', 'jc-badges');
+	row.append(badge('Canned answer — not a model judgment', 'warn'));
+	const wrap = el('div');
+	wrap.append(row);
+	wrap.append(el('div', 'jc-hint', 'No NeuroBrain model replied, so this is built-in generic text. Check that the model PC is on, then ask again.'));
+	return wrap;
 }
 
 function strategistInitial(author) {
@@ -3163,11 +3203,17 @@ function chapterLines(opt, lengthSec) {
 	return kept.length >= 3 ? kept.map((c) => `${c.ts} ${c.title}`).join('\n') : '';
 }
 
+// The description JCVIQ suggests and applies: the composed text plus any
+// chapter list YouTube would accept.
+function descriptionWithChapters(opt) {
+	const chapters = chapterLines(opt, S.meta && S.meta.lengthSeconds);
+	return composeDescription(opt) + (chapters ? '\n\n' + chapters : '');
+}
+
 async function applyAll(opt, opts = {}) {
 	let applied = 0;
 	if (opt.titles && opt.titles.length && setStudioTextbox('title', opt.titles[0].title)) applied++;
-	const chapters = chapterLines(opt, S.meta && S.meta.lengthSeconds);
-	const desc = composeDescription(opt) + (chapters ? '\n\n' + chapters : '');
+	const desc = descriptionWithChapters(opt);
 	if (desc.trim() && setStudioTextbox('description', desc)) applied++;
 	if (opt.tags && opt.tags.length && await setStudioTags(opt.tags)) applied++;
 	if (!opts.quiet) toast(applied ? 'Title, description and tags applied. Review, then Save in Studio.' : 'Could not find the Studio fields.', applied ? 'ok' : 'err', 5000);
