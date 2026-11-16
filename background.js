@@ -779,7 +779,7 @@ const RESPONSE_SCHEMA = {
 		'primaryKeyword', 'secondaryKeywords', 'titles', 'description', 'hashtags', 'tags', 'tagReasons',
 		'thumbnailConcepts', 'chapters', 'pinnedComment', 'playlistSuggestions',
 		'category', 'hook', 'endScreenTips', 'keywordStrategy', 'contentStrategy',
-		'researchInsights', 'scores', 'repurposing'
+		'researchInsights', 'scores', 'repurposing', 'visualSetting'
 	]
 };
 
@@ -1195,7 +1195,19 @@ function buildThumbnailPrompt(p, aspect) {
 	// One era per image. This outranks the concept text, because concepts and
 	// NeuroBrain directions written before this rule existed can still ask
 	// for modern or mixed-era scenes.
-	const vs = checkVisualSetting(p.visualSetting, [...titles, p.keyword, p.description, p.scriptExcerpt]);
+	const cueTexts = [...titles, p.keyword, p.overlay, p.description, p.scriptExcerpt];
+	let vs = checkVisualSetting(p.visualSetting, cueTexts);
+	// No visualSetting (the model left it out, or the result predates it): never
+	// default a biblical or historical video to the present day.
+	if (!vs && HISTORY_CUE_RE.test(cueTexts.filter(Boolean).join('\n'))) {
+		vs = {
+			era: 'the historical era the video\'s subject belongs to (it is about the past, not the present day)',
+			artStyle: 'that era\'s own art tradition (biblical and religious subjects: Renaissance/Baroque old-master oil painting; ancient Rome or Greece: classical fresco or marble; 20th-century history: period archival photography)',
+			wardrobeAndProps: 'period clothing, architecture, objects and light sources only',
+			avoid: 'modern buildings, streets, clothing, people and technology; split screens',
+			isHistorical: true
+		};
+	}
 	const clip = (t, n) => String(t || '').trim().slice(0, n);
 	lines.push('PERIOD AND SETTING LOCK (binding — overrides the visual concept and the NeuroBrain direction wherever they conflict):');
 	if (vs && vs.era) {
