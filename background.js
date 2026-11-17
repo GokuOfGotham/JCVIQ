@@ -1277,6 +1277,8 @@ async function generateThumbnail(p, setStep) {
 		variants,
 		title: p.originalTitle || p.videoTitle || '',
 		niche: p.niche || '',
+		left_image_base64: p.leftImage || null,
+		right_image_base64: p.rightImage || null,
 		reference_base64: p.reference && p.reference.data ? p.reference.data : null
 	}, 240000 + (variants + 1) * 180000);
 	if (!data || !data.image_base64) throw new Error('NeuroBrain returned no image. Try again.');

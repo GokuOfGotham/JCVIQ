@@ -1766,6 +1766,7 @@ function customGeneratorCard() {
 	refCb.addEventListener('change', () => { S.customPrompt.useReference = refCb.checked; });
 	useRef.append(refCb, el('span', null, 'Use a frame from the player as reference, when the page allows it'));
 	c.append(useRef);
+	c.append(compareImagesField());
 
 	const actions = el('div', 'jc-actions');
 	actions.append(button('Generate', {
@@ -1780,6 +1781,61 @@ function customGeneratorCard() {
 	slot.dataset.jc = 'gen-custom';
 	c.append(slot);
 	return c;
+}
+
+// Your own images for a split-screen "A vs B" thumbnail (a game screenshot, a cover, a product shot). Supplying
+// one makes NeuroBrain use the comparison layout and place it, framed, under that side's name and value. Using
+// someone else's artwork is your call as the creator (commentary often relies on fair use).
+function compareImagesField() {
+	S.compareImages = S.compareImages || {};
+	const wrap = el('div');
+	const row = el('div', 'jc-actions');
+	['left', 'right'].forEach((side) => {
+		const input = el('input');
+		input.type = 'file';
+		input.accept = 'image/*';
+		input.hidden = true;
+		input.addEventListener('change', async () => {
+			const f = input.files && input.files[0];
+			if (!f) return;
+			try {
+				S.compareImages[side] = await imageFileToJpegB64(f, 1024);
+				toast(`${side === 'left' ? 'Left' : 'Right'} image set for split-screen thumbnails.`, 'ok');
+			} catch (e) {
+				toast('Could not read that image.', 'err');
+			}
+			input.value = '';
+			wrap.replaceWith(compareImagesField());
+		});
+		const has = Boolean(S.compareImages[side]);
+		row.append(input, button(`${side === 'left' ? 'Left' : 'Right'} image${has ? ' ✓' : ''}`, {
+			small: true, icon: 'upload', onClick: () => input.click()
+		}));
+		if (has) {
+			const img = el('img');
+			img.src = `data:image/jpeg;base64,${S.compareImages[side]}`;
+			img.alt = '';
+			img.style.height = '40px';
+			img.style.borderRadius = '4px';
+			row.append(img);
+		}
+	});
+	if (S.compareImages.left || S.compareImages.right) {
+		row.append(button('Clear', { small: true, onClick: () => { S.compareImages = {}; wrap.replaceWith(compareImagesField()); } }));
+	}
+	wrap.append(el('div', 'jc-label', 'Split-screen images (optional)'), row,
+		el('div', 'jc-hint', 'For "A vs B" thumbnails: add your own screenshot or cover for either side and it is placed, framed, under that side\'s name and number. Applies to every thumbnail you generate for this video.'));
+	return wrap;
+}
+
+async function imageFileToJpegB64(file, maxSide) {
+	const bmp = await createImageBitmap(file);
+	const scale = Math.min(1, maxSide / Math.max(bmp.width, bmp.height));
+	const canvas = document.createElement('canvas');
+	canvas.width = Math.round(bmp.width * scale);
+	canvas.height = Math.round(bmp.height * scale);
+	canvas.getContext('2d').drawImage(bmp, 0, 0, canvas.width, canvas.height);
+	return canvas.toDataURL('image/jpeg', 0.9).split(',')[1];
 }
 
 async function generateThumbnailFor(key, concept, btn) {
@@ -1821,6 +1877,8 @@ async function generateThumbnailFor(key, concept, btn) {
 		description: (S.meta && S.meta.description) || '',
 		scriptExcerpt: (S.sources.script.text || '').slice(0, 900),
 		variants: Number(S.settings.thumbVariants) || 1,
+		leftImage: (S.compareImages && S.compareImages.left) || null,
+		rightImage: (S.compareImages && S.compareImages.right) || null,
 		reference
 	});
 
