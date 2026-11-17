@@ -1584,6 +1584,29 @@ function renderThumbnail() {
 	} else {
 		preview.append(el('div', 'jc-thumb-img ph', 'No thumbnail yet'));
 	}
+	if (m.videoId) {
+		// Channel memory: once YouTube Studio shows this video's impressions CTR, report it so NeuroBrain favours the
+		// looks that actually get clicks. It goes to the JCVIQ thumbnail you last used on this video.
+		const ctrRow = el('div', 'jc-actions');
+		const ctr = el('input');
+		ctr.type = 'number';
+		ctr.min = '0';
+		ctr.max = '100';
+		ctr.step = '0.1';
+		ctr.placeholder = 'CTR %';
+		ctr.style.width = '80px';
+		ctrRow.append(ctr, button('Report CTR', {
+			small: true, icon: 'check',
+			onClick: async () => {
+				const val = parseFloat(ctr.value);
+				if (!(val >= 0 && val <= 100)) { toast('Enter the impressions CTR from Studio, e.g. 6.2', 'err'); return; }
+				const res = await send({ action: 'thumbFeedback', payload: { videoId: m.videoId, ctr: val } });
+				if (res && res.success && res.ok) toast('CTR saved. NeuroBrain will favour this look.', 'ok');
+				else toast((res && res.error) || 'No JCVIQ thumbnail was marked as used on this video yet (Download or Set in Studio first).', 'err', 8000);
+			}
+		}));
+		preview.append(ctrRow, el('div', 'jc-hint', 'After a day or two, enter this video\'s impressions click-through rate from Studio analytics; NeuroBrain learns which thumbnail styles work on your channel.'));
+	}
 	v.append(preview);
 
 	if (!opt) {
@@ -1768,7 +1791,8 @@ async function generateThumbnailFor(key, concept, btn) {
 	if (slot) {
 		slot.innerHTML = '';
 		const status = el('div', 'jc-status');
-		status.append(el('span', 'jc-spinner'), el('span', null, 'Generating image… this takes 10–30 seconds.'));
+		const nv = Number(S.settings.thumbVariants) || 1;
+		status.append(el('span', 'jc-spinner'), el('span', null, nv > 1 ? `Rendering ${nv} versions on gamingpc_rx and keeping the best… about ${nv * 2}-${nv * 2 + 2} minutes.` : 'Generating and checking the image on gamingpc_rx… about 2-3 minutes.'));
 		slot.append(status);
 	}
 
@@ -1796,6 +1820,7 @@ async function generateThumbnailFor(key, concept, btn) {
 		visualSetting: (S.result && S.result.visualSetting) || null,
 		description: (S.meta && S.meta.description) || '',
 		scriptExcerpt: (S.sources.script.text || '').slice(0, 900),
+		variants: Number(S.settings.thumbVariants) || 1,
 		reference
 	});
 
@@ -1818,7 +1843,14 @@ async function generateThumbnailFor(key, concept, btn) {
 		aspect: res.aspect,
 		size: res.size || '',
 		usedReference: Boolean(reference),
-		overlay: concept.overlay || ''
+		overlay: res.overlayUsed || concept.overlay || '',
+		thumbId: res.thumbId || '',
+		style: res.style || '',
+		channelExamples: res.channelExamples || 0,
+		review: res.review || null,
+		candidates: res.candidates || [],
+		retried: Boolean(res.retried),
+		reported: false
 	};
 	renderGenerated(key);
 	toast('Thumbnail generated.', 'ok');
@@ -1836,8 +1868,8 @@ function renderGenerated(key) {
 	slot.append(img);
 
 	const row = el('div', 'jc-actions');
-	row.append(button('Download', { small: true, icon: 'upload', onClick: () => downloadGenerated(key) }));
-	if (IS_STUDIO) row.append(button('Set in Studio', { small: true, icon: 'pen', className: 'apply', onClick: () => sendToStudioThumbnail(key) }));
+	row.append(button('Download', { small: true, icon: 'upload', onClick: () => { downloadGenerated(key); reportThumbUsed(key); } }));
+	if (IS_STUDIO) row.append(button('Set in Studio', { small: true, icon: 'pen', className: 'apply', onClick: () => { sendToStudioThumbnail(key); reportThumbUsed(key); } }));
 	row.append(button('Regenerate', {
 		small: true, icon: 'refresh',
 		onClick: (e) => {
@@ -1848,7 +1880,28 @@ function renderGenerated(key) {
 		}
 	}));
 	slot.append(row);
-	slot.append(el('div', 'jc-hint', `${g.aspect}${g.size ? ' · ' + g.size : ''}${g.usedReference ? ' · matched to a frame from the player' : ''}. Image models can misspell overlay text — check it before you upload.`));
+	slot.append(el('div', 'jc-hint', `${g.aspect}${g.size ? ' · ' + g.size : ''}${g.usedReference ? ' · matched to a frame from the player' : ''}${g.style ? ' · style: ' + g.style : ''}${g.channelExamples ? ' · learned from ' + g.channelExamples + ' of your used thumbnails' : ''}.`));
+	slot.append(el('div', 'jc-hint', reviewSummary(g)));
+}
+
+// What NeuroBrain's vision model thought of the image it kept.
+function reviewSummary(g) {
+	const r = g.review;
+	if (!r || r.score === null || r.score === undefined) return 'Not reviewed (the vision model did not answer). The text is set with a real font, so it is spelled exactly as shown.';
+	const parts = [`Review score ${Number(r.score).toFixed(1)}/10`];
+	if (g.candidates && g.candidates.length > 1) parts.push(`best of ${g.candidates.length} renders`);
+	if (g.retried) parts.push('re-rendered once to fix ' + ((g.candidates.find((c) => c.hard_fails && c.hard_fails.length) || {}).hard_fails || ['issues']).join(', '));
+	if (r.hard_fails && r.hard_fails.length) parts.push('still flagged: ' + r.hard_fails.join(', '));
+	if (r.fix) parts.push('could improve: ' + r.fix);
+	return parts.join(' · ') + '.';
+}
+
+// Channel memory: NeuroBrain learns from the thumbnails you actually use.
+function reportThumbUsed(key) {
+	const g = S.generated[key];
+	if (!g || !g.thumbId || g.reported) return;
+	g.reported = true;
+	send({ action: 'thumbFeedback', payload: { thumbId: g.thumbId, used: true, videoId: (S.meta && S.meta.videoId) || null } });
 }
 
 function conceptAt(i) {
@@ -2860,6 +2913,11 @@ function renderSettings() {
 		const img = st.image || {};
 		localInfo.textContent = `Text: ${hosts} model host${hosts === 1 ? '' : 's'} up. Thumbnails: ${img.reachable ? 'ready on ' + (img.gpu || 'a local GPU') + (img.seconds_per_image ? ' (~' + img.seconds_per_image + ' s each)' : '') : 'no image backend (' + (img.error || 'check NeuroBrain') + ')'}. Cost: $0.`;
 	});
+	const quality = el('select');
+	[['1', 'Fast: 1 render, checked and fixed once if needed (~2-3 min)'], ['2', 'Better: best of 2 renders (~4-6 min)'], ['3', 'Best: best of 3 renders (~6-8 min)']]
+		.forEach(([val, label]) => { const o = el('option', null, label); o.value = val; quality.append(o); });
+	quality.value = String(s.thumbVariants || 1);
+	api.append(field('Thumbnail quality', quality, 'NeuroBrain\'s vision model scores every render (clear subject, right era, no stray text) and keeps the best.'));
 	v.append(api);
 
 	// NeuroBrain OS (CORTEX-5)
@@ -2941,6 +2999,7 @@ function renderSettings() {
 				neuroBrainUrl: neuroUrl.value.trim(),
 				autoApply: autoCb.checked,
 				ytClientId: ytId.value.trim(),
+				thumbVariants: Number(quality.value) || 1,
 				channelProfile: profile
 			};
 			await storageSet({
@@ -2948,6 +3007,7 @@ function renderSettings() {
 				neuroBrainUrl: S.settings.neuroBrainUrl,
 				autoApply: S.settings.autoApply,
 				ytClientId: S.settings.ytClientId,
+				thumbVariants: S.settings.thumbVariants,
 				channelProfile: profile
 			});
 			await storageSet({ ytToken: '', ytTokenExp: 0 });
@@ -2963,7 +3023,7 @@ function renderSettings() {
 async function loadSettings() {
 	S.settings = await storageGet([
 		'useNeuroBrain', 'neuroBrainUrl', 'autoApply', 'channelProfile',
-		'contentType', 'watchByUrl', 'panelCollapsed', 'ytClientId'
+		'contentType', 'watchByUrl', 'panelCollapsed', 'ytClientId', 'thumbVariants'
 	]);
 	const options = await send({ action: 'getOptions' });
 	S.options = options && !options.error ? options : null;

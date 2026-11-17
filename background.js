@@ -50,6 +50,7 @@ const HANDLERS = {
 	// Slow calls run as jobs (see below); everything else answers inline.
 	analyze: (req) => startJob((setStep) => analyze(req.payload || {}, setStep)),
 	generateThumbnail: (req) => startJob((setStep) => generateThumbnail(req.payload || {}, setStep)),
+	thumbFeedback: (req) => thumbFeedback(req.payload || {}),
 	neuroAdvise: (req) => startJob((setStep) => runNeuroAdvise(req.payload || {}, setStep)),
 	neuroHookScore: (req) => startJob((setStep) => runNeuroHookScore(req.payload || {}, setStep)),
 	neuroKnowledgeSearch: (req) => runNeuroKnowledgeSearch(req.query || '', req.topK || 6),
@@ -1261,12 +1262,23 @@ function buildThumbnailPrompt(p, aspect) {
 
 async function generateThumbnail(p, setStep) {
 	const aspect = ASPECTS.has(p.aspect) ? p.aspect : '16:9';
-	if (setStep) setStep(`Generating a ${aspect} thumbnail locally with ${LOCAL_IMAGE_MODEL} (about 1.5-2 min on gamingpc_rx)…`);
+	const variants = Math.max(1, Math.min(3, Number(p.variants) || 1));
+	if (setStep) {
+		setStep(variants > 1
+			? `Rendering ${variants} ${aspect} thumbnails on gamingpc_rx and keeping the best (about ${variants * 2}-${variants * 2 + 2} min)…`
+			: `Generating a ${aspect} thumbnail on gamingpc_rx and checking it (about 2-3 min)…`);
+	}
+	// The overlay is sent on its own: NeuroBrain renders a text-free image, reviews it with its vision model, and
+	// sets these exact words with a real font. Title and niche pick the style guide and the channel's proven looks.
 	const { data } = await neuroCall('/api/thumbnail/generate', {
-		brief: buildThumbnailPrompt(p, aspect),
+		brief: buildThumbnailPrompt({ ...p, overlay: '' }, aspect),
+		overlay: String(p.overlay || '').trim(),
 		aspect,
+		variants,
+		title: p.originalTitle || p.videoTitle || '',
+		niche: p.niche || '',
 		reference_base64: p.reference && p.reference.data ? p.reference.data : null
-	}, 400000);
+	}, 240000 + (variants + 1) * 180000);
 	if (!data || !data.image_base64) throw new Error('NeuroBrain returned no image. Try again.');
 	return {
 		success: true,
@@ -1275,8 +1287,29 @@ async function generateThumbnail(p, setStep) {
 		size: `${data.width}x${data.height}`,
 		model: `${data.model || LOCAL_IMAGE_MODEL}${data.prompt_writer ? ', prompt by ' + data.prompt_writer : ''}`,
 		promptUsed: data.prompt_used || '',
-		seconds: data.timings_sec ? data.timings_sec.total : null
+		seconds: data.timings_sec ? data.timings_sec.total : null,
+		thumbId: data.thumb_id || '',
+		overlayUsed: data.overlay || '',
+		style: data.style_label || '',
+		channelExamples: data.channel_examples || 0,
+		review: data.review || null,
+		candidates: data.candidates || [],
+		retried: Boolean(data.retried)
 	};
+}
+
+// Channel memory: tell NeuroBrain which generated thumbnail was used (and its CTR once known), so its prompt writer
+// learns this channel's winning look.
+async function thumbFeedback(p) {
+	try {
+		const body = { thumb_id: p.thumbId || '', video_id: p.videoId || null };
+		if (p.used !== undefined) body.used = Boolean(p.used);
+		if (p.ctr !== undefined && p.ctr !== null && p.ctr !== '') body.ctr = Number(p.ctr);
+		const { data } = await neuroCall('/api/thumbnail/feedback', body, 15000);
+		return { success: true, ...data };
+	} catch (e) {
+		return { error: String(e.message || e) };
+	}
 }
 
 /* ============================ JSON repair ============================ */
