@@ -1613,6 +1613,7 @@ function renderThumbnail() {
 		v.append(emptyState('Run an analysis to score the thumbnail and get three concepts to try.', 'image'));
 		v.append(customGeneratorCard());
 		if (S.generated.custom) renderGenerated('custom');
+		v.append(competitorCard());
 		return;
 	}
 
@@ -1730,6 +1731,72 @@ function renderThumbnail() {
 
 	v.append(customGeneratorCard());
 	if (S.generated.custom) renderGenerated('custom');
+	v.append(competitorCard());
+}
+
+// What the most-viewed videos for this keyword use as thumbnails (NeuroBrain: yt-dlp search + local vision model,
+// free, cached a day). The same research is fed to the image prompt writer when a thumbnail is generated.
+function researchKeyword() {
+	return currentKeyword() || (S.meta && S.meta.title) || '';
+}
+
+function competitorCard() {
+	const c = card('Top thumbnails for this topic', 'image');
+	const kw = el('input');
+	kw.type = 'text';
+	kw.value = (S.research && S.research.keyword) || researchKeyword();
+	kw.placeholder = 'search keyword, e.g. gta 6 file size';
+	c.append(field('YouTube search', kw, 'NeuroBrain looks at the most-viewed videos for this search and tells the image writer what works and what is overused. It runs automatically when you generate; this shows it.'));
+	const body = el('div');
+	const row = el('div', 'jc-actions');
+	const run = async (refresh, btn) => {
+		const q = kw.value.trim();
+		if (!q) { toast('Enter a search keyword first.', 'warn'); return; }
+		if (btn) btn.disabled = true;
+		body.innerHTML = '';
+		const status = el('div', 'jc-status');
+		status.append(el('span', 'jc-spinner'), el('span', null, 'Looking at the top videos on YouTube… about 30 seconds the first time.'));
+		body.append(status);
+		const res = await send({ action: 'thumbResearch', keyword: q, refresh });
+		if (btn) btn.disabled = false;
+		if (!res || res.error) { body.innerHTML = ''; toast((res && res.error) || 'Research failed.', 'err', 8000); return; }
+		S.research = res.data;
+		renderResearch(body, res.data);
+	};
+	row.append(button('Research', { small: true, icon: 'refresh', onClick: (e) => run(false, e.currentTarget) }),
+		button('Refresh', { small: true, onClick: (e) => run(true, e.currentTarget) }));
+	c.append(row, body);
+	if (S.research && S.research.videos) renderResearch(body, S.research);
+	return c;
+}
+
+function renderResearch(body, r) {
+	body.innerHTML = '';
+	if (r.error) { body.append(el('div', 'jc-hint', r.error)); return; }
+	const grid = el('div');
+	grid.style.display = 'grid';
+	grid.style.gridTemplateColumns = 'repeat(3, 1fr)';
+	grid.style.gap = '6px';
+	(r.videos || []).forEach((vd) => {
+		const a = el('a');
+		a.href = vd.url;
+		a.target = '_blank';
+		a.rel = 'noopener';
+		a.title = `${vd.title} (${vd.channel})`;
+		const img = el('img');
+		img.src = vd.thumbnail_url;
+		img.alt = '';
+		img.style.width = '100%';
+		img.style.borderRadius = '4px';
+		a.append(img, el('div', 'jc-hint', `${Number(vd.views || 0).toLocaleString()} views`));
+		grid.append(a);
+	});
+	body.append(grid);
+	const p = r.patterns || {};
+	if (p.summary) body.append(el('div', 'jc-hint', `What works: ${p.summary}`));
+	if (p.cliches) body.append(el('div', 'jc-hint', `Overused: ${p.cliches}`));
+	if (p.stand_out) body.append(el('div', 'jc-hint', `To stand out: ${p.stand_out}`));
+	body.append(el('div', 'jc-hint', `Search "${r.keyword}"${r.cached ? ' (cached today)' : ''}.`));
 }
 
 /* ---- Thumbnail generation ---- */
@@ -1870,6 +1937,7 @@ async function generateThumbnailFor(key, concept, btn) {
 		originalTitle: (S.meta && S.meta.title) || '',
 		videoTitle: (S.result && S.result.titles && S.result.titles.length ? S.result.titles[0].title : '') || '',
 		keyword: currentKeyword(),
+		researchKeyword: (S.research && S.research.keyword) || researchKeyword(),
 		niche: profile.niche || '',
 		// Era and art style for the whole image, so a biblical or Renaissance
 		// subject is never drawn in a modern or mixed-era look.
@@ -3528,6 +3596,7 @@ async function refreshMeta(opts = {}) {
 		// Generated images belong to the video they were made for.
 		S.generated = {};
 		S.generating = {};
+		S.research = null;
 		await loadSources();
 	}
 	if (S.busy) return;

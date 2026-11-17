@@ -51,6 +51,7 @@ const HANDLERS = {
 	analyze: (req) => startJob((setStep) => analyze(req.payload || {}, setStep)),
 	generateThumbnail: (req) => startJob((setStep) => generateThumbnail(req.payload || {}, setStep)),
 	thumbFeedback: (req) => thumbFeedback(req.payload || {}),
+	thumbResearch: (req) => thumbResearch(req.keyword || '', Boolean(req.refresh)),
 	neuroAdvise: (req) => startJob((setStep) => runNeuroAdvise(req.payload || {}, setStep)),
 	neuroHookScore: (req) => startJob((setStep) => runNeuroHookScore(req.payload || {}, setStep)),
 	neuroKnowledgeSearch: (req) => runNeuroKnowledgeSearch(req.query || '', req.topK || 6),
@@ -1277,6 +1278,7 @@ async function generateThumbnail(p, setStep) {
 		variants,
 		title: p.originalTitle || p.videoTitle || '',
 		niche: p.niche || '',
+		keyword: p.researchKeyword || p.keyword || '',
 		left_image_base64: p.leftImage || null,
 		right_image_base64: p.rightImage || null,
 		reference_base64: p.reference && p.reference.data ? p.reference.data : null
@@ -1298,6 +1300,15 @@ async function generateThumbnail(p, setStep) {
 		candidates: data.candidates || [],
 		retried: Boolean(data.retried)
 	};
+}
+
+// Competitor research: the most-viewed videos for a search and what their thumbnails share.
+async function thumbResearch(keyword, refresh) {
+	const path = `/api/thumbnail/research?keyword=${encodeURIComponent(String(keyword).trim())}${refresh ? '&refresh=true' : ''}`;
+	const res = await neuroRequest(path, { method: 'GET', timeoutMs: 240000 });
+	if (!res || !res.data) return { error: 'Could not reach NeuroBrain for the competitor research.' };
+	if (res.data.error) return { error: String(res.data.error) };
+	return { success: true, data: res.data };
 }
 
 // Channel memory: tell NeuroBrain which generated thumbnail was used (and its CTR once known), so its prompt writer
